@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stazione Meteo Montenero</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Stazione Meteo Montenero</h1>
+            <p class="subtitle">Dati meteorologici in tempo reale</p>
+        </header>
+        
+        <main>
+            <div class="chart-container">
+                <div class="chart-header">
+                    <h2>Andamento Meteo</h2>
+                    <div class="last-update">Ultimo aggiornamento: <span id="lastUpdate"></span></div>
+                </div>
+                <canvas id="myChart"></canvas>
+            </div>
+        </main>
+
+        <footer>
+            <p>Dati forniti da <a href="https://stazioni.meteoproject.it/dati/montenero/" target="_blank">MeteoProject</a></p>
+            <p>Aggiornato ogni 15 minuti</p>
+        </footer>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
