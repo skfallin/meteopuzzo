@@ -5,6 +5,10 @@ on:
     - cron: '*/15 * * * *'  # Runs every 15 minutes
   workflow_dispatch:  # Allows manual triggering
 
+# Add permissions block
+permissions:
+  contents: write  # Required for pushing changes
+
 jobs:
   update-weather:
     runs-on: ubuntu-latest
@@ -13,6 +17,7 @@ jobs:
     - uses: actions/checkout@v3
       with:
         fetch-depth: 0  # Fetch all history for proper git operations
+        token: ${{ secrets.GITHUB_TOKEN }}  # Use the default token
     
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -25,11 +30,32 @@ jobs:
         pip install -r requirements.txt
     
     - name: Run update script
-      run: python update_data.py
+      id: update
+      run: |
+        python update_data.py
+        if [ $? -eq 0 ]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+        else
+          echo "status=failure" >> $GITHUB_OUTPUT
+          exit 1
+        fi
     
     - name: Commit and push if changed
+      if: steps.update.outputs.status == 'success'
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
         git add export.csv
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Update weather data [skip ci]" && git push) 
+        if git diff --quiet && git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update weather data [skip ci]"
+          git push
+        fi
+      continue-on-error: true  # Don't fail the workflow if push fails
+    
+    - name: Check for errors
+      if: failure()
+      run: |
+        echo "The workflow failed. Check the logs above for details."
+        exit 1 
