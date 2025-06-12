@@ -30,6 +30,4 @@ A real-time weather station website displaying meteorological data from Montener
 
 ## Website
 
-The website is hosted at: [https://YOUR_USERNAME.github.io/meteopuzzo/](https://YOUR_USERNAME.github.io/meteopuzzo/)
-
-(Replace YOUR_USERNAME with your GitHub username after deployment) 
+The website is hosted at: [https://skfallin.github.io/meteopuzzo/](https://skfallin.github.io/meteopuzzo/)
