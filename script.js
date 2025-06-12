@@ -32,7 +32,16 @@ function updateLastUpdateTime() {
 // Function to fetch and parse CSV data
 async function fetchData() {
     try {
-        const response = await fetch('export.csv');
+        // Add timestamp to prevent caching
+        const timestamp = new Date().getTime();
+        const response = await fetch(`export.csv?t=${timestamp}`, {
+            cache: 'no-store',
+            headers: {
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            }
+        });
         const csvText = await response.text();
         const lines = csvText.split('\n');
         
@@ -70,8 +79,8 @@ async function fetchData() {
 // Initial data fetch
 fetchData();
 
-// Refresh data every 15 minutes (900000 ms)
-setInterval(fetchData, 900000);
+// Refresh data every 5 minutes (300000 ms) instead of 15 minutes
+setInterval(fetchData, 300000);
 
 // Remove the interval for updating the last update time since we don't need it anymore
 // The last update time will be updated only when new data is fetched
