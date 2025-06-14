@@ -49,24 +49,26 @@ async function fetchData() {
         const dataLines = lines.slice(1).filter(line => line.trim() && !line.includes('Unita di misura'));
         
         const labels = [];
-        const tempData = [];
-        const humData = [];
-        const pressData = [];
+        const windData = [];
+        const gustData = [];
+        const directionData = [];
         
         dataLines.forEach(line => {
             const [date, time, temp, min, max, hum, dew, wind, dir, gust, gustDir, press] = line.split(';');
-            if (date && time && temp && hum && press) {
+            if (date && time && wind && dir && gust) {
                 // Keep the original date format from CSV
                 const dateTime = `${date} ${time}`;
                 labels.push(dateTime);
-                tempData.push(parseFloat(temp));
-                humData.push(parseFloat(hum));
-                pressData.push(parseFloat(press));
+                windData.push(parseFloat(wind));
+                gustData.push(parseFloat(gust));
+                // Convert wind direction to degrees for better visualization
+                const directionDegrees = convertDirectionToDegrees(dir);
+                directionData.push(directionDegrees);
             }
         });
 
         // Draw the chart with the data
-        drawChart(labels, tempData, humData, pressData);
+        drawChart(labels, windData, gustData, directionData);
         
         // Update the last update time after drawing the chart
         updateLastUpdateTime();
@@ -74,6 +76,17 @@ async function fetchData() {
     } catch (error) {
         console.error('Error fetching or parsing CSV:', error);
     }
+}
+
+// Function to convert wind direction to degrees
+function convertDirectionToDegrees(direction) {
+    const directions = {
+        'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
+        'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
+        'S': 180, 'SSW': 202.5, 'SW': 225, 'WSW': 247.5,
+        'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5
+    };
+    return directions[direction] || 0;
 }
 
 // Initial data fetch
@@ -125,7 +138,7 @@ function parseCSV(text) {
     return { labels, tempData, humData, pressData };
 }
 
-function drawChart(labels, tempData, humData, pressData) {
+function drawChart(labels, windData, gustData, directionData) {
     const ctx = document.getElementById('myChart').getContext('2d');
     
     // Chart.js global defaults
@@ -144,26 +157,11 @@ function drawChart(labels, tempData, humData, pressData) {
             labels: labels,
             datasets: [
                 {
-                    label: 'Temperatura',
-                    data: tempData,
-                    borderColor: '#FF6384',
-                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
-                    yAxisID: 'yTemp',
-                    tension: 0.4,
-                    pointRadius: 2,
-                    pointHoverRadius: 4,
-                    pointHoverBorderWidth: 2,
-                    pointHoverBackgroundColor: '#FF6384',
-                    pointHoverBorderColor: '#fff',
-                    borderWidth: 2,
-                    spanGaps: false
-                },
-                {
-                    label: 'Umidità',
-                    data: humData,
+                    label: 'Vento',
+                    data: windData,
                     borderColor: '#36A2EB',
                     backgroundColor: 'rgba(54, 162, 235, 0.1)',
-                    yAxisID: 'yHum',
+                    yAxisID: 'yWind',
                     tension: 0.4,
                     pointRadius: 2,
                     pointHoverRadius: 4,
@@ -174,11 +172,26 @@ function drawChart(labels, tempData, humData, pressData) {
                     spanGaps: false
                 },
                 {
-                    label: 'Pressione',
-                    data: pressData,
+                    label: 'Raffica',
+                    data: gustData,
+                    borderColor: '#FF6384',
+                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                    yAxisID: 'yWind',
+                    tension: 0.4,
+                    pointRadius: 2,
+                    pointHoverRadius: 4,
+                    pointHoverBorderWidth: 2,
+                    pointHoverBackgroundColor: '#FF6384',
+                    pointHoverBorderColor: '#fff',
+                    borderWidth: 2,
+                    spanGaps: false
+                },
+                {
+                    label: 'Direzione',
+                    data: directionData,
                     borderColor: '#4BC0C0',
                     backgroundColor: 'rgba(75, 192, 192, 0.1)',
-                    yAxisID: 'yPress',
+                    yAxisID: 'yDirection',
                     tension: 0.4,
                     pointRadius: 2,
                     pointHoverRadius: 4,
@@ -233,12 +246,13 @@ function drawChart(labels, tempData, humData, pressData) {
                             if (label) {
                                 label += ': ';
                             }
-                            if (context.dataset.yAxisID === 'yTemp') {
-                                label += context.parsed.y.toFixed(1) + '°C';
-                            } else if (context.dataset.yAxisID === 'yHum') {
-                                label += context.parsed.y.toFixed(1) + '%';
-                            } else if (context.dataset.yAxisID === 'yPress') {
-                                label += context.parsed.y.toFixed(1) + ' hPa';
+                            if (context.dataset.yAxisID === 'yWind') {
+                                label += context.parsed.y.toFixed(1) + ' km/h';
+                            } else if (context.dataset.yAxisID === 'yDirection') {
+                                const degrees = context.parsed.y;
+                                const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+                                const index = Math.round(degrees / 22.5) % 16;
+                                label += directions[index] + ' (' + degrees.toFixed(0) + '°)';
                             }
                             return label;
                         }
@@ -252,112 +266,35 @@ function drawChart(labels, tempData, humData, pressData) {
                         color: 'rgba(0, 0, 0, 0.1)'
                     },
                     ticks: {
-                        maxRotation: 0,
-                        minRotation: 0,
-                        autoSkip: true,
-                        maxTicksLimit: 12,
-                        font: {
-                            size: 11
-                        },
-                        padding: 10,
-                        callback: function(value, index, values) {
-                            const label = this.getLabelForValue(value);
-                            const date = new Date(label);
-                            // Only show hour:minute for better readability
-                            return date.toLocaleString('it-IT', {
-                                hour: '2-digit',
-                                minute: '2-digit'
-                            });
-                        }
-                    },
-                    border: {
-                        display: true
-                    },
-                    offset: false
+                        maxRotation: 45,
+                        minRotation: 45
+                    }
                 },
-                yTemp: {
+                yWind: {
                     type: 'linear',
+                    display: true,
                     position: 'left',
                     title: {
                         display: true,
-                        text: 'Temperatura (°C)',
-                        font: {
-                            weight: 'bold',
-                            size: 12
-                        },
-                        padding: {top: 10, bottom: 10}
+                        text: 'Velocità (km/h)'
                     },
                     grid: {
+                        display: true,
                         color: 'rgba(0, 0, 0, 0.1)'
-                    },
-                    border: {
-                        display: true
-                    },
-                    ticks: {
-                        padding: 10,
-                        font: {
-                            size: 11
-                        },
-                        callback: function(value) {
-                            return value.toFixed(1);
-                        }
                     }
                 },
-                yHum: {
+                yDirection: {
                     type: 'linear',
+                    display: true,
                     position: 'right',
                     title: {
                         display: true,
-                        text: 'Umidità (%)',
-                        font: {
-                            weight: 'bold',
-                            size: 12
-                        },
-                        padding: {top: 10, bottom: 10}
+                        text: 'Direzione (°)'
                     },
+                    min: 0,
+                    max: 360,
                     grid: {
                         display: false
-                    },
-                    border: {
-                        display: true
-                    },
-                    ticks: {
-                        padding: 10,
-                        font: {
-                            size: 11
-                        },
-                        callback: function(value) {
-                            return value.toFixed(1);
-                        }
-                    }
-                },
-                yPress: {
-                    type: 'linear',
-                    position: 'right',
-                    offset: true,
-                    title: {
-                        display: true,
-                        text: 'Pressione (hPa)',
-                        font: {
-                            weight: 'bold',
-                            size: 12
-                        },
-                        padding: {top: 10, bottom: 10}
-                    },
-                    grid: {
-                        display: false
-                    },
-                    border: {
-                        display: true
-                    },
-                    ticks: {
-                        padding: 10,
-                        font: {
-                            size: 11
-                        },
-                        callback: function(value) {
-                            return value.toFixed(1);
-                        }
                     }
                 }
             }
