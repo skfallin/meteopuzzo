@@ -32,7 +32,7 @@ jobs:
     - name: Run update script
       id: update
       run: |
-        python update_data.py
+        python "Update Data.py"
         if [ $? -eq 0 ]; then
           echo "status=success" >> $GITHUB_OUTPUT
         else

@@ -61,8 +61,9 @@ async function fetchData() {
                 labels.push(dateTime);
                 windData.push(parseFloat(wind));
                 gustData.push(parseFloat(gust));
-                // Keep direction as string (cardinal points)
-                directionData.push(dir);
+                // Convert wind direction to degrees for better visualization
+                const directionDegrees = convertDirectionToDegrees(dir);
+                directionData.push(directionDegrees);
             }
         });
 
@@ -77,7 +78,7 @@ async function fetchData() {
     }
 }
 
-// Function to convert wind direction to degrees (for reference)
+// Function to convert wind direction to degrees
 function convertDirectionToDegrees(direction) {
     const directions = {
         'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
@@ -86,13 +87,6 @@ function convertDirectionToDegrees(direction) {
         'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5
     };
     return directions[direction] || 0;
-}
-
-// Function to convert degrees to cardinal direction
-function convertDegreesToDirection(degrees) {
-    const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-    const index = Math.round(degrees / 22.5) % 16;
-    return directions[index];
 }
 
 // Initial data fetch
@@ -157,9 +151,6 @@ function drawChart(labels, windData, gustData, directionData) {
     Chart.defaults.plugins.tooltip.boxHeight = 8;
     Chart.defaults.plugins.tooltip.usePointStyle = true;
 
-    // Convert direction strings to numeric values for the chart
-    const directionNumericData = directionData.map(dir => convertDirectionToDegrees(dir));
-
     new Chart(ctx, {
         type: 'line',
         data: {
@@ -197,7 +188,7 @@ function drawChart(labels, windData, gustData, directionData) {
                 },
                 {
                     label: 'Direzione',
-                    data: directionNumericData,
+                    data: directionData,
                     borderColor: '#4BC0C0',
                     backgroundColor: 'rgba(75, 192, 192, 0.1)',
                     yAxisID: 'yDirection',
@@ -259,8 +250,9 @@ function drawChart(labels, windData, gustData, directionData) {
                                 label += context.parsed.y.toFixed(1) + ' km/h';
                             } else if (context.dataset.yAxisID === 'yDirection') {
                                 const degrees = context.parsed.y;
-                                const direction = convertDegreesToDirection(degrees);
-                                label += direction + ' (' + degrees.toFixed(0) + '°)';
+                                const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+                                const index = Math.round(degrees / 22.5) % 16;
+                                label += directions[index] + ' (' + degrees.toFixed(0) + '°)';
                             }
                             return label;
                         }
@@ -297,22 +289,12 @@ function drawChart(labels, windData, gustData, directionData) {
                     position: 'right',
                     title: {
                         display: true,
-                        text: 'Direzione'
+                        text: 'Direzione (°)'
                     },
                     min: 0,
                     max: 360,
                     grid: {
                         display: false
-                    },
-                    ticks: {
-                        callback: function(value, index, values) {
-                            // Show cardinal directions instead of degrees
-                            const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-                            const directionIndex = Math.round(value / 22.5) % 16;
-                            return directions[directionIndex];
-                        },
-                        stepSize: 22.5,
-                        maxTicksLimit: 16
                     }
                 }
             }

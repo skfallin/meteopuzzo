@@ -26,6 +26,7 @@ weather_update.log
 # Virtual Environment
 venv/
 ENV/
+.venv/
 
 # IDE
 .vscode/

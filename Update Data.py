@@ -4,6 +4,7 @@ from datetime import datetime
 import logging
 from io import StringIO
 import sys
+import time
 
 # Set up logging to stdout for GitHub Actions
 logging.basicConfig(
@@ -28,6 +29,34 @@ def get_csv_url():
     }
     return f"https://stazioni.meteoproject.it/dati/montenero/csv.php?gg={params['gg']}&mm={params['mm']}&aa={params['aa']}&gg2={params['gg2']}&mm2={params['mm2']}&aa2={params['aa2']}"
 
+def update_archive_data():
+    """Update the archive data before downloading CSV"""
+    try:
+        update_url = "https://stazioni.meteoproject.it/dati/montenero/archivio.php?download=si"
+        logging.info(f"Updating archive data from {update_url}")
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'it-IT,it;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+        
+        response = requests.get(update_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        logging.info(f"Archive update response status: {response.status_code}")
+        logging.info("Archive data updated successfully")
+        
+        # Wait a moment for the server to process the update
+        time.sleep(2)
+        
+    except Exception as e:
+        logging.error(f"Error updating archive data: {str(e)}")
+        # Continue anyway, maybe the CSV is already updated
+
 def convert_to_numeric(series):
     """Convert a pandas series to numeric, handling both string and numeric inputs."""
     if pd.api.types.is_numeric_dtype(series):
@@ -36,6 +65,9 @@ def convert_to_numeric(series):
 
 def download_weather_data():
     try:
+        # First, update the archive data
+        update_archive_data()
+        
         url = get_csv_url()
         logging.info(f"Downloading data from {url}")
         
