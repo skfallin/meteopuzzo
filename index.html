@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#07111d">
+    <meta name="theme-color" content="#eef4fb">
     <title>Stazione Meteo Montenero</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,47 +15,102 @@
 <body>
     <div class="page-shell">
         <header class="hero">
-            <div class="hero-copy">
-                <p class="eyebrow">Stazione Meteo Montenero</p>
-                <h1>Dati meteorologici live, puliti e leggibili</h1>
-                <p class="subtitle">
-                    Il frontend consuma <code>data/series.json</code> e <code>data/status.json</code>, mostra il dato piu recente
-                    e segnala subito se la sorgente e in ritardo o degradata.
-                </p>
+            <div class="hero-main">
+                <section class="current-card" aria-labelledby="currentTitle">
+                    <div class="current-primary">
+                        <p id="currentTitle" class="current-label">Temperatura attuale</p>
+                        <p id="heroTemperature" class="current-value">--</p>
+                        <p id="heroNarrative" class="current-note">Caricamento dati in corso.</p>
+                    </div>
+
+                    <div class="current-stats" aria-live="polite">
+                        <div class="current-stat">
+                            <span>Vento</span>
+                            <strong id="heroWind">--</strong>
+                        </div>
+                        <div class="current-stat">
+                            <span>Direzione</span>
+                            <strong id="heroDirection">--</strong>
+                        </div>
+                        <div class="current-stat">
+                            <span>Umidita</span>
+                            <strong id="heroHumidity">--</strong>
+                        </div>
+                        <div class="current-stat">
+                            <span>Pressione</span>
+                            <strong id="heroPressure">--</strong>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="hero-copy">
+                    <p class="eyebrow">Stazione Meteo Montenero</p>
+                    <h1>Dati meteo live</h1>
+                    <p class="subtitle">Lettura immediata delle condizioni correnti e del trend recente.</p>
+                </div>
             </div>
 
-            <div class="hero-meta" aria-live="polite">
+            <aside class="hero-status" aria-live="polite">
                 <div id="connectionPill" class="status-pill is-loading">Caricamento dati</div>
+                <p id="freshnessSummary" class="status-headline">Sto recuperando gli ultimi dati disponibili.</p>
                 <p id="lastUpdate" class="last-update">Ultimo aggiornamento: in attesa dei dati</p>
-                <button id="refreshNow" class="ghost-button" type="button">Aggiorna ora</button>
-            </div>
+                <div class="hero-actions">
+                    <button id="refreshNow" class="ghost-button" type="button">Aggiorna</button>
+                </div>
+
+                <details id="statusDetails" class="status-details">
+                    <summary id="statusDetailsSummary">Dettagli affidabilita</summary>
+                    <ul id="statusDetailsList" class="status-details-list"></ul>
+                </details>
+            </aside>
         </header>
 
         <main class="app-grid">
+            <section id="statusBanner" class="status-banner" role="status" aria-live="polite" hidden></section>
+
             <section class="panel panel-summary" aria-labelledby="summaryTitle">
-                <div class="panel-head">
+                <div class="panel-head panel-head-inline">
                     <div>
                         <p class="panel-kicker">Panoramica</p>
-                        <h2 id="summaryTitle">Ultimi valori disponibili</h2>
+                        <h2 id="summaryTitle">Dati di adesso</h2>
+                        <p id="summaryMeta" class="panel-meta">Caricamento dati in corso</p>
                     </div>
-                    <p id="summaryMeta" class="panel-meta">Caricamento dati in corso</p>
+                    <p class="panel-tip">Tocca una scheda per aprire il trend.</p>
                 </div>
-                <div id="summaryGrid" class="summary-grid" aria-live="polite"></div>
+
+                <div id="summaryPrimary" class="summary-grid summary-grid-primary" aria-live="polite"></div>
+                <div id="summarySecondary" class="summary-grid summary-grid-secondary" aria-live="polite"></div>
             </section>
 
-            <section class="panel panel-chart" aria-labelledby="chartTitle">
+            <section id="trendPanel" class="panel panel-chart" aria-labelledby="chartTitle">
                 <div class="panel-head panel-head-stack">
-                    <div>
+                    <div class="chart-copy">
                         <p class="panel-kicker">Trend</p>
-                        <h2 id="chartTitle">Andamento serie</h2>
-                        <p id="chartSubtitle" class="panel-meta">Seleziona una metrica per esplorare i dati.</p>
+                        <h2 id="chartTitle">Trend temperatura</h2>
+                        <p id="chartSubtitle" class="panel-meta">Seleziona una metrica e un intervallo per leggere l'andamento.</p>
                     </div>
-                    <div class="metric-switcher" role="tablist" aria-label="Seleziona metrica">
-                        <button class="metric-button is-active" type="button" data-metric="temperature">Temperatura</button>
-                        <button class="metric-button" type="button" data-metric="humidity">Umidita</button>
-                        <button class="metric-button" type="button" data-metric="pressure">Pressione</button>
-                        <button class="metric-button" type="button" data-metric="wind">Vento</button>
-                        <button class="metric-button" type="button" data-metric="rain">Pioggia</button>
+
+                    <div class="chart-controls">
+                        <div class="control-group">
+                            <p class="control-label">Metrica</p>
+                            <div class="metric-switcher" role="group" aria-label="Metrica da visualizzare">
+                                <button class="metric-button is-active" type="button" data-metric="temperature">Temperatura</button>
+                                <button class="metric-button" type="button" data-metric="humidity">Umidita</button>
+                                <button class="metric-button" type="button" data-metric="pressure">Pressione</button>
+                                <button class="metric-button" type="button" data-metric="wind">Vento</button>
+                                <button class="metric-button" type="button" data-metric="rain">Pioggia</button>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <p class="control-label">Intervallo</p>
+                            <div class="range-switcher" role="group" aria-label="Intervallo temporale">
+                                <button class="range-button" type="button" data-range="1h">1h</button>
+                                <button class="range-button" type="button" data-range="6h">6h</button>
+                                <button class="range-button" type="button" data-range="12h">12h</button>
+                                <button class="range-button" type="button" data-range="24h">24h</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -63,18 +118,16 @@
                     <div id="chartEmptyState" class="empty-state">
                         <div class="empty-state-inner">
                             <p class="empty-kicker">Attesa dati</p>
-                            <h3>Nessuna serie disponibile al momento</h3>
-                            <p>Verifica che <code>data/series.json</code> e <code>data/status.json</code> siano pubblicati dal workflow.</p>
+                            <h3>Sto preparando il grafico</h3>
+                            <p>Appena arrivano i dati della stazione troverai qui il trend della metrica selezionata.</p>
                         </div>
                     </div>
                     <canvas id="myChart" aria-describedby="chartDescription"></canvas>
                     <p id="chartDescription" class="sr-only">
-                        Grafico interattivo dei dati meteorologici. Usa i pulsanti sopra per cambiare metrica.
+                        Grafico interattivo dei dati meteorologici. Usa i controlli sopra per cambiare metrica e intervallo.
                     </p>
                 </div>
             </section>
-
-            <section id="statusBanner" class="status-banner" role="status" aria-live="polite" hidden></section>
         </main>
 
         <footer class="site-footer">
@@ -84,7 +137,7 @@
                     MeteoProject
                 </a>
             </p>
-            <p>Refresh automatico ogni 5 minuti.</p>
+            <p>Aggiornamento automatico ogni 5 minuti.</p>
         </footer>
     </div>
 </body>

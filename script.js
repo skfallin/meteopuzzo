@@ -4,43 +4,77 @@ const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 12000;
 const STALE_THRESHOLD_MINUTES = 90;
 const STORAGE_KEY = 'meteopuzzo.selectedMetric';
+const RANGE_STORAGE_KEY = 'meteopuzzo.selectedRange';
 
 const METRICS = {
     temperature: {
         label: 'Temperatura',
         unit: 'C',
         axisLabel: 'Temperatura (C)',
-        color: '#ff8f6b',
+        color: '#ec7b57',
         companion: 'dewPoint',
+        tone: 'warm',
     },
     humidity: {
         label: 'Umidita',
         unit: '%',
         axisLabel: 'Umidita (%)',
-        color: '#4fd1c5',
+        color: '#1f9f78',
+        tone: 'green',
     },
     pressure: {
         label: 'Pressione',
         unit: 'hPa',
         axisLabel: 'Pressione (hPa)',
-        color: '#7dd3fc',
+        color: '#1c8dd8',
+        tone: 'blue',
     },
     wind: {
         label: 'Vento',
         unit: 'km/h',
         axisLabel: 'Vento (km/h)',
-        color: '#fbbf24',
+        color: '#c78a19',
         companion: 'gust',
+        tone: 'gold',
     },
     rain: {
         label: 'Pioggia',
         unit: 'mm',
         axisLabel: 'Pioggia (mm)',
-        color: '#a78bfa',
+        color: '#4f7bf5',
+        tone: 'blue',
+    },
+    gust: {
+        label: 'Raffica',
+        unit: 'km/h',
+        axisLabel: 'Raffica (km/h)',
+        color: '#d38b18',
+        tone: 'gold',
+    },
+    dewPoint: {
+        label: 'Dew point',
+        unit: 'C',
+        axisLabel: 'Dew point (C)',
+        color: '#e9a089',
+        tone: 'warm',
+    },
+    direction: {
+        label: 'Direzione',
+        unit: '',
+        axisLabel: 'Direzione',
+        color: '#1c8dd8',
+        tone: 'blue',
     },
 };
 
 const METRIC_ORDER = ['temperature', 'humidity', 'pressure', 'wind', 'rain'];
+const RANGE_OPTIONS = {
+    '1h': { label: '1h', minutes: 60 },
+    '6h': { label: '6h', minutes: 6 * 60 },
+    '12h': { label: '12h', minutes: 12 * 60 },
+    '24h': { label: '24h', minutes: 24 * 60 },
+};
+const RANGE_ORDER = ['1h', '6h', '12h', '24h'];
 
 const FIELD_ALIASES = {
     timestamp: ['timestamp', 'datetime', 'dateTime', 'dataora', 'datetimeiso', 'iso', 'date_time', 'observedAt', 'time', 'ts'],
@@ -48,7 +82,7 @@ const FIELD_ALIASES = {
     clock: ['time', 'ora', 'hour'],
     temperature: ['temperature', 'temp', 'temperatura', 'temperatureC', 'tempC'],
     dewPoint: ['dewPoint', 'dewpt', 'dew_pt', 'dew pt', 'dew', 'puntoRugiada', 'dewPointC'],
-    humidity: ['humidity', 'hum', 'umid', 'umidita', 'umidità', 'humidityPct'],
+    humidity: ['humidity', 'hum', 'umid', 'umidita', 'umidita', 'humidityPct'],
     pressure: ['pressure', 'press', 'pressione', 'pressureHpa'],
     wind: ['wind', 'vento', 'windKmh'],
     gust: ['gust', 'raffica', 'gustKmh'],
@@ -60,6 +94,8 @@ const FIELD_ALIASES = {
     stale: ['stale', 'isStale'],
     sourceUpdatedAt: ['sourceUpdatedAt', 'latestObservationAt', 'lastObservationAt', 'lastSourceTimestamp', 'observedAt'],
     publishedAt: ['publishedAt', 'lastUpdatedAt', 'updatedAt', 'lastPublishAt', 'lastSuccessfulPublish', 'generatedAt'],
+    observationAgeMinutes: ['observationAgeMinutes', 'ageMinutes'],
+    expectedCadenceMinutes: ['expectedCadenceMinutes', 'cadenceMinutes'],
 };
 
 const state = {
@@ -67,6 +103,7 @@ const state = {
     records: [],
     status: null,
     selectedMetric: window.localStorage.getItem(STORAGE_KEY) || 'temperature',
+    selectedRange: window.localStorage.getItem(RANGE_STORAGE_KEY) || getDefaultRange(),
     loading: false,
     requestController: null,
     requestId: 0,
@@ -81,6 +118,8 @@ async function init() {
     cacheElements();
     bindActions();
     applyChartDefaults();
+    renderSummarySkeleton();
+    renderHeroEmpty();
     await loadDashboard({ initial: true });
     window.setInterval(() => {
         loadDashboard({ silent: true });
@@ -89,16 +128,29 @@ async function init() {
 
 function cacheElements() {
     elements.connectionPill = document.getElementById('connectionPill');
+    elements.freshnessSummary = document.getElementById('freshnessSummary');
     elements.lastUpdate = document.getElementById('lastUpdate');
     elements.refreshNow = document.getElementById('refreshNow');
-    elements.summaryGrid = document.getElementById('summaryGrid');
+    elements.statusDetails = document.getElementById('statusDetails');
+    elements.statusDetailsSummary = document.getElementById('statusDetailsSummary');
+    elements.statusDetailsList = document.getElementById('statusDetailsList');
+    elements.heroTemperature = document.getElementById('heroTemperature');
+    elements.heroWind = document.getElementById('heroWind');
+    elements.heroDirection = document.getElementById('heroDirection');
+    elements.heroHumidity = document.getElementById('heroHumidity');
+    elements.heroPressure = document.getElementById('heroPressure');
+    elements.heroNarrative = document.getElementById('heroNarrative');
+    elements.summaryPrimary = document.getElementById('summaryPrimary');
+    elements.summarySecondary = document.getElementById('summarySecondary');
     elements.summaryMeta = document.getElementById('summaryMeta');
     elements.chartTitle = document.getElementById('chartTitle');
     elements.chartSubtitle = document.getElementById('chartSubtitle');
     elements.chartEmptyState = document.getElementById('chartEmptyState');
     elements.statusBanner = document.getElementById('statusBanner');
     elements.metricButtons = Array.from(document.querySelectorAll('.metric-button'));
+    elements.rangeButtons = Array.from(document.querySelectorAll('.range-button'));
     elements.canvas = document.getElementById('myChart');
+    elements.chartPanel = document.getElementById('trendPanel');
 }
 
 function bindActions() {
@@ -106,17 +158,81 @@ function bindActions() {
 
     elements.metricButtons.forEach((button) => {
         button.addEventListener('click', () => {
-            const metric = button.dataset.metric;
-            if (!metric || !state.availableMetrics.has(metric)) {
-                return;
-            }
-
-            state.selectedMetric = metric;
-            window.localStorage.setItem(STORAGE_KEY, metric);
-            renderMetricState();
-            renderChart();
+            selectMetric(button.dataset.metric);
         });
     });
+
+    elements.rangeButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            selectRange(button.dataset.range);
+        });
+    });
+
+    bindArrowKeyNavigation('.metric-switcher', '.metric-button');
+    bindArrowKeyNavigation('.range-switcher', '.range-button');
+}
+
+function bindArrowKeyNavigation(containerSelector, buttonSelector) {
+    const container = document.querySelector(containerSelector);
+    if (!container) {
+        return;
+    }
+
+    container.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+            return;
+        }
+
+        const buttons = Array.from(container.querySelectorAll(buttonSelector)).filter((button) => !button.disabled);
+        if (!buttons.length) {
+            return;
+        }
+
+        const currentIndex = buttons.indexOf(document.activeElement);
+        let nextIndex = currentIndex >= 0 ? currentIndex : 0;
+
+        if (event.key === 'Home') {
+            nextIndex = 0;
+        } else if (event.key === 'End') {
+            nextIndex = buttons.length - 1;
+        } else {
+            const direction = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+            nextIndex = currentIndex >= 0 ? (currentIndex + direction + buttons.length) % buttons.length : 0;
+        }
+
+        buttons[nextIndex].focus();
+        event.preventDefault();
+    });
+}
+
+function selectMetric(metric, { scroll = false } = {}) {
+    if (!metric || !state.availableMetrics.has(metric)) {
+        return;
+    }
+
+    state.selectedMetric = metric;
+    window.localStorage.setItem(STORAGE_KEY, metric);
+    renderMetricState();
+    renderChart();
+
+    if (scroll && elements.chartPanel) {
+        elements.chartPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+function selectRange(range) {
+    if (!RANGE_OPTIONS[range]) {
+        return;
+    }
+
+    state.selectedRange = range;
+    window.localStorage.setItem(RANGE_STORAGE_KEY, range);
+    renderMetricState();
+    renderChart();
+}
+
+function getDefaultRange() {
+    return window.matchMedia('(max-width: 700px)').matches ? '6h' : '24h';
 }
 
 function applyChartDefaults() {
@@ -125,12 +241,12 @@ function applyChartDefaults() {
     }
 
     window.Chart.defaults.font.family = "'Manrope', sans-serif";
-    window.Chart.defaults.color = '#d7e4f7';
+    window.Chart.defaults.color = '#5f7185';
     window.Chart.defaults.plugins.legend.labels.usePointStyle = true;
-    window.Chart.defaults.plugins.legend.labels.boxWidth = 10;
-    window.Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(7, 17, 29, 0.96)';
+    window.Chart.defaults.plugins.legend.labels.boxWidth = 9;
+    window.Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(16, 32, 51, 0.96)';
     window.Chart.defaults.plugins.tooltip.titleColor = '#ffffff';
-    window.Chart.defaults.plugins.tooltip.bodyColor = '#d7e4f7';
+    window.Chart.defaults.plugins.tooltip.bodyColor = '#e7eef7';
     window.Chart.defaults.plugins.tooltip.padding = 12;
     window.Chart.defaults.plugins.tooltip.cornerRadius = 12;
 }
@@ -191,6 +307,7 @@ async function loadDashboard({ initial = false, force = false, silent = false } 
         state.records = records;
         state.availableMetrics = detectAvailableMetrics(records);
         state.selectedMetric = resolveSelectedMetric(state.selectedMetric, state.availableMetrics);
+        state.selectedRange = resolveSelectedRange(state.selectedRange);
 
         renderDashboard();
         state.loading = false;
@@ -357,7 +474,6 @@ function readNumber(record, lookup, keys) {
     }
 
     const normalized = String(rawValue).trim().replace(',', '.');
-
     if (!normalized || normalized.toUpperCase() === 'NULL' || normalized === '-') {
         return null;
     }
@@ -453,7 +569,6 @@ function parseTimestampValue(value) {
 function combineDateAndTime(datePart, clockPart) {
     const dateText = String(datePart).trim();
     const timeText = String(clockPart).trim();
-
     const match = dateText.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
     if (!match) {
         return parseTimestampValue(`${dateText} ${timeText}`);
@@ -494,6 +609,15 @@ function formatDateForDisplay(date) {
     }).format(date);
 }
 
+function formatDateShort(date) {
+    return new Intl.DateTimeFormat('it-IT', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+    }).format(date);
+}
+
 function pad2(value) {
     return String(value).padStart(2, '0');
 }
@@ -507,6 +631,12 @@ function normalizeStatus(raw) {
             rowCount: null,
             sourceUpdatedAt: null,
             publishedAt: null,
+            observationAgeMinutes: null,
+            expectedCadenceMinutes: null,
+            warnings: [],
+            checks: [],
+            triggerArchiveRefresh: null,
+            raw: {},
         };
     }
 
@@ -521,10 +651,15 @@ function normalizeStatus(raw) {
     return {
         status,
         message,
-        stale: parseBoolean(staleRaw) || status === 'stale' || status === 'degraded',
+        stale: parseBoolean(staleRaw) || status === 'stale',
         rowCount,
         sourceUpdatedAt,
         publishedAt,
+        observationAgeMinutes: readNumber(raw, lookup, FIELD_ALIASES.observationAgeMinutes),
+        expectedCadenceMinutes: readNumber(raw, lookup, FIELD_ALIASES.expectedCadenceMinutes),
+        warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
+        checks: Array.isArray(raw.checks) ? raw.checks : [],
+        triggerArchiveRefresh: raw.triggerArchiveRefresh || null,
         raw,
     };
 }
@@ -566,62 +701,275 @@ function resolveSelectedMetric(selectedMetric, availableMetrics) {
     return METRIC_ORDER.find((metric) => availableMetrics.has(metric)) || 'temperature';
 }
 
+function resolveSelectedRange(selectedRange) {
+    return RANGE_OPTIONS[selectedRange] ? selectedRange : getDefaultRange();
+}
+
 function renderDashboard() {
-    renderMetricSwitcher();
+    renderHero();
     renderSummary();
     renderMetricState();
     renderChart();
     renderHealth();
 }
 
-function renderMetricSwitcher() {
-    elements.metricButtons.forEach((button) => {
-        const metric = button.dataset.metric;
-        const available = state.availableMetrics.has(metric);
-        button.disabled = !available;
-        button.classList.toggle('is-active', metric === state.selectedMetric);
-        button.classList.toggle('is-disabled', !available);
-        button.setAttribute('aria-selected', metric === state.selectedMetric ? 'true' : 'false');
+function renderHero() {
+    const latest = state.records[state.records.length - 1];
+    if (!latest) {
+        renderHeroEmpty();
+        return;
+    }
+
+    elements.heroTemperature.textContent = formatMetricCard('temperature', latest.temperature);
+    elements.heroWind.textContent = formatMetricCard('wind', latest.wind);
+    elements.heroDirection.textContent = formatDirectionCard(latest.direction);
+    elements.heroHumidity.textContent = formatMetricCard('humidity', latest.humidity);
+    elements.heroPressure.textContent = formatMetricCard('pressure', latest.pressure);
+    elements.heroNarrative.textContent = buildHeroNarrative(latest);
+    elements.freshnessSummary.textContent = buildFreshnessHeadline();
+    elements.lastUpdate.textContent = buildUpdateLine();
+    renderStatusDetails();
+}
+
+function renderHeroEmpty() {
+    elements.heroTemperature.textContent = '--';
+    elements.heroWind.textContent = '--';
+    elements.heroDirection.textContent = '--';
+    elements.heroHumidity.textContent = '--';
+    elements.heroPressure.textContent = '--';
+    elements.heroNarrative.textContent = 'Caricamento dati in corso.';
+    elements.freshnessSummary.textContent = 'Sto recuperando gli ultimi dati disponibili.';
+    elements.lastUpdate.textContent = 'Ultimo aggiornamento: in attesa dei dati';
+    renderStatusDetails();
+}
+
+function buildHeroNarrative(latest) {
+    const parts = [];
+
+    if (latest.wind !== null) {
+        const direction = latest.direction ? ` da ${simplifyDirection(latest.direction)}` : '';
+        parts.push(`Vento ${describeWind(latest.wind)}${direction}`);
+    }
+
+    if (latest.gust !== null) {
+        parts.push(`raffiche fino a ${formatMetricCard('gust', latest.gust)}`);
+    }
+
+    if (latest.rain !== null && latest.rain > 0) {
+        parts.push(`pioggia ${formatMetricCard('rain', latest.rain)}`);
+    } else {
+        parts.push('pioggia assente');
+    }
+
+    return parts.length ? `${capitalizeSentence(parts.join(' · '))}.` : 'In attesa di un campione valido.';
+}
+
+function simplifyDirection(value) {
+    const label = formatDirectionCard(value);
+    return label === 'n/d' ? label : label.split(' ')[0];
+}
+
+function buildFreshnessHeadline() {
+    const ageMinutes = getObservationAgeMinutes();
+    if (ageMinutes === null) {
+        return 'Ultimo dato disponibile pronto per la lettura.';
+    }
+
+    if (ageMinutes <= 20) {
+        return `Ultimo dato ${formatAge(ageMinutes)} fa.`;
+    }
+
+    if (ageMinutes <= getStaleThreshold()) {
+        return `Ultimo dato ${formatAge(ageMinutes)} fa. La sorgente e in ritardo.`;
+    }
+
+    return `Ultimo dato ${formatAge(ageMinutes)} fa. Il dato non e piu fresco.`;
+}
+
+function buildUpdateLine() {
+    const latest = state.records[state.records.length - 1];
+    const publishedLabel = state.status?.publishedAt?.sortKey
+        ? formatDateShort(new Date(state.status.publishedAt.sortKey))
+        : null;
+    const sourceLabel = state.status?.sourceUpdatedAt?.sortKey
+        ? formatDateShort(new Date(state.status.sourceUpdatedAt.sortKey))
+        : latest?.sortKey
+            ? formatDateShort(new Date(latest.sortKey))
+            : 'n/d';
+    const rowCount = state.status?.rowCount || state.records.length;
+
+    if (publishedLabel) {
+        return `Pubblicato ${publishedLabel} · ultimo dato ${sourceLabel} · ${rowCount} campioni`;
+    }
+
+    return `Ultimo dato ${sourceLabel} · ${rowCount} campioni`;
+}
+
+function renderStatusDetails() {
+    if (!elements.statusDetails || !elements.statusDetailsList || !elements.statusDetailsSummary) {
+        return;
+    }
+
+    const items = [];
+    const ageMinutes = getObservationAgeMinutes();
+    const cadence = state.status?.expectedCadenceMinutes;
+
+    if (ageMinutes !== null) {
+        items.push(`Ultima osservazione ricevuta ${formatAge(ageMinutes)} fa.`);
+    }
+
+    if (Number.isFinite(cadence)) {
+        items.push(`Cadenza attesa: una misura ogni ${Math.round(cadence)} minuti.`);
+    }
+
+    state.status?.checks?.forEach((check) => {
+        if (check?.details) {
+            const prefix = check.ok ? 'Controllo ok' : 'Attenzione';
+            items.push(`${prefix}: ${sanitizeText(check.details)}.`);
+        }
     });
+
+    state.status?.warnings?.forEach((warning) => {
+        items.push(`Avviso: ${sanitizeText(warning)}.`);
+    });
+
+    if (state.status?.triggerArchiveRefresh?.attempted && state.status.triggerArchiveRefresh.details) {
+        items.push(sanitizeText(state.status.triggerArchiveRefresh.details));
+    }
+
+    if (!items.length) {
+        elements.statusDetails.hidden = true;
+        elements.statusDetailsList.replaceChildren();
+        return;
+    }
+
+    elements.statusDetails.hidden = false;
+    elements.statusDetailsSummary.textContent = 'Dettagli affidabilita';
+    elements.statusDetailsList.replaceChildren(...items.map((item) => {
+        const li = document.createElement('li');
+        li.textContent = item;
+        return li;
+    }));
 }
 
 function renderSummary() {
     const latest = state.records[state.records.length - 1];
-    const cards = [];
-
-    if (latest) {
-        pushSummaryCard(cards, 'Temperatura', latest.temperature, 'temperature', 'Ultimo dato disponibile');
-        pushSummaryCard(cards, 'Umidita', latest.humidity, 'humidity', 'Percentuale relativa');
-        pushSummaryCard(cards, 'Pressione', latest.pressure, 'pressure', 'Valore barometrico');
-        pushSummaryCard(cards, 'Vento', latest.wind, 'wind', 'Velocita media');
-        pushSummaryCard(cards, 'Raffica', latest.gust, 'gust', 'Picco registrato');
-        pushSummaryCard(cards, 'Pioggia', latest.rain, 'rain', 'Cumulata / evento');
-        pushSummaryCard(cards, 'Dew point', latest.dewPoint, 'dewPoint', 'Punto di rugiada');
-        if (latest.direction !== null && latest.direction !== undefined && latest.direction !== '') {
-            cards.push(createSummaryCard('Direzione', formatDirectionCard(latest.direction), 'Direzione del vento'));
-        }
-    }
-
-    elements.summaryGrid.replaceChildren(...cards.filter(Boolean));
-
-    const rowCount = state.status?.rowCount;
-    const sourceLabel = state.status?.status ? `Stato sorgente: ${capitalize(state.status.status)}` : 'Stato sorgente: n/d';
-    const freshnessLabel = describeFreshness();
-    const sampleLabel = rowCount ? `${rowCount} campioni` : `${state.records.length} campioni`;
-    elements.summaryMeta.textContent = [sourceLabel, sampleLabel, freshnessLabel].filter(Boolean).join(' · ');
-}
-
-function pushSummaryCard(cards, label, value, metric, hint) {
-    if (value === null || value === undefined) {
+    if (!latest) {
+        renderSummarySkeleton();
         return;
     }
 
-    cards.push(createSummaryCard(label, formatMetricCard(metric, value), hint));
+    const primaryCards = [
+        createSummaryCard({
+            label: 'Temperatura',
+            value: formatMetricCard('temperature', latest.temperature),
+            note: buildDeltaNote('temperature', 60, 'Variazione nell ultima ora'),
+            targetMetric: 'temperature',
+            tone: 'warm',
+            primary: true,
+        }),
+        createSummaryCard({
+            label: 'Vento',
+            value: formatMetricCard('wind', latest.wind),
+            note: latest.gust !== null ? `Raffica ${formatMetricCard('gust', latest.gust)}` : 'Velocita media attuale',
+            targetMetric: 'wind',
+            tone: 'gold',
+            primary: true,
+        }),
+        createSummaryCard({
+            label: 'Umidita',
+            value: formatMetricCard('humidity', latest.humidity),
+            note: buildDeltaNote('humidity', 60, 'Valore relativo'),
+            targetMetric: 'humidity',
+            tone: 'green',
+            primary: true,
+        }),
+    ].filter(Boolean);
+
+    const secondaryCards = [
+        createSummaryCard({
+            label: 'Pressione',
+            value: formatMetricCard('pressure', latest.pressure),
+            note: buildDeltaNote('pressure', 60, 'Trend barometrico'),
+            targetMetric: 'pressure',
+            tone: 'blue',
+        }),
+        createSummaryCard({
+            label: 'Raffica',
+            value: formatMetricCard('gust', latest.gust),
+            note: 'Picco dell ultima lettura',
+            targetMetric: 'wind',
+            tone: 'gold',
+        }),
+        createSummaryCard({
+            label: 'Pioggia',
+            value: formatMetricCard('rain', latest.rain),
+            note: 'Ultimo valore registrato',
+            targetMetric: 'rain',
+            tone: 'blue',
+        }),
+        createSummaryCard({
+            label: 'Dew point',
+            value: formatMetricCard('dewPoint', latest.dewPoint),
+            note: 'Compagno della temperatura',
+            targetMetric: 'temperature',
+            tone: 'warm',
+        }),
+        createSummaryCard({
+            label: 'Direzione',
+            value: formatDirectionCard(latest.direction),
+            note: 'Direzione del vento',
+            targetMetric: 'wind',
+            tone: 'blue',
+        }),
+    ].filter(Boolean);
+
+    elements.summaryPrimary.replaceChildren(...primaryCards);
+    elements.summarySecondary.replaceChildren(...secondaryCards);
+
+    const rowCount = state.status?.rowCount || state.records.length;
+    elements.summaryMeta.textContent = `Tocca una scheda per aprire il trend · ${rowCount} campioni disponibili`;
+    syncSummarySelectionState();
 }
 
-function createSummaryCard(label, value, hint) {
-    const card = document.createElement('article');
-    card.className = 'summary-card';
+function renderSummarySkeleton() {
+    if (!elements.summaryPrimary || !elements.summarySecondary) {
+        return;
+    }
+
+    const primaryCards = Array.from({ length: 3 }, (_, index) => createSkeletonCard(index === 0));
+    const secondaryCards = Array.from({ length: 4 }, () => createSkeletonCard(false));
+    elements.summaryPrimary.replaceChildren(...primaryCards);
+    elements.summarySecondary.replaceChildren(...secondaryCards);
+}
+
+function createSkeletonCard(isPrimary) {
+    const card = document.createElement('div');
+    card.className = `summary-card is-skeleton ${isPrimary ? 'is-primary' : 'is-secondary'}`;
+
+    const label = document.createElement('div');
+    label.className = 'skeleton-line';
+
+    const value = document.createElement('div');
+    value.className = 'skeleton-block';
+
+    const note = document.createElement('div');
+    note.className = 'skeleton-line long';
+
+    card.append(label, value, note);
+    return card;
+}
+
+function createSummaryCard({ label, value, note, targetMetric, tone, primary = false }) {
+    if (!value || value === 'n/d') {
+        return null;
+    }
+
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = `summary-card ${primary ? 'is-primary' : 'is-secondary'}${tone ? ` tone-${tone}` : ''}`;
+    card.dataset.targetMetric = targetMetric;
+    card.setAttribute('aria-pressed', targetMetric === state.selectedMetric ? 'true' : 'false');
 
     const title = document.createElement('p');
     title.className = 'summary-label';
@@ -631,79 +979,132 @@ function createSummaryCard(label, value, hint) {
     reading.className = 'summary-value';
     reading.textContent = value;
 
-    const note = document.createElement('p');
-    note.className = 'summary-hint';
-    note.textContent = hint;
+    const noteElement = document.createElement('p');
+    noteElement.className = 'summary-note';
+    noteElement.textContent = note;
 
-    card.append(title, reading, note);
+    card.append(title, reading, noteElement);
+    card.addEventListener('click', () => {
+        selectMetric(targetMetric, { scroll: true });
+    });
+
     return card;
 }
 
-function formatMetricCard(metric, value) {
-    if (value === null || value === undefined || Number.isNaN(value)) {
-        return 'n/d';
-    }
-
-    switch (metric) {
-        case 'temperature':
-        case 'dewPoint':
-            return `${formatNumber(value, 1)} C`;
-        case 'humidity':
-            return `${formatNumber(value, 0)} %`;
-        case 'pressure':
-            return `${formatNumber(value, 1)} hPa`;
-        case 'wind':
-        case 'gust':
-            return `${formatNumber(value, 1)} km/h`;
-        case 'rain':
-            return `${formatNumber(value, 1)} mm`;
-        default:
-            return formatNumber(value, 1);
-    }
+function syncSummarySelectionState() {
+    const cards = document.querySelectorAll('.summary-card[data-target-metric]');
+    cards.forEach((card) => {
+        const active = card.dataset.targetMetric === state.selectedMetric;
+        card.classList.toggle('is-active', active);
+        card.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
 }
 
-function formatDirectionCard(value) {
-    if (value === null || value === undefined || value === '') {
-        return 'n/d';
+function buildDeltaNote(metric, minutes, fallback) {
+    const latest = state.records[state.records.length - 1];
+    const previous = getRecordAtMinutesAgo(minutes);
+    const latestValue = latest ? getMetricValue(latest, metric) : null;
+    const previousValue = previous ? getMetricValue(previous, metric) : null;
+
+    if (latestValue === null || previousValue === null) {
+        return fallback;
     }
 
-    if (typeof value === 'number' && Number.isFinite(value)) {
-        return `${degreesToDirection(value)} (${Math.round(value)} deg)`;
-    }
-
-    const numeric = Number(String(value).replace(',', '.'));
-    if (Number.isFinite(numeric)) {
-        return `${degreesToDirection(numeric)} (${Math.round(numeric)} deg)`;
-    }
-
-    return String(value);
+    const delta = latestValue - previousValue;
+    const sign = delta > 0 ? '+' : delta < 0 ? '-' : '';
+    return `${minutes / 60}h: ${sign}${formatMetricCard(metric, Math.abs(delta))}`;
 }
 
-function formatNumber(value, digits = 1) {
-    return new Intl.NumberFormat('it-IT', {
-        minimumFractionDigits: digits,
-        maximumFractionDigits: digits,
-    }).format(value);
+function getRecordAtMinutesAgo(minutes) {
+    if (!state.records.length) {
+        return null;
+    }
+
+    const latest = state.records[state.records.length - 1];
+    if (!Number.isFinite(latest.sortKey)) {
+        const fallbackStep = estimateSampleCountForMinutes(minutes);
+        return state.records[Math.max(0, state.records.length - 1 - fallbackStep)] || null;
+    }
+
+    const targetTime = latest.sortKey - (minutes * 60000);
+    for (let index = state.records.length - 1; index >= 0; index -= 1) {
+        const record = state.records[index];
+        if (Number.isFinite(record.sortKey) && record.sortKey <= targetTime) {
+            return record;
+        }
+    }
+
+    return state.records[0] || null;
 }
 
-function capitalize(text) {
-    return String(text || '').charAt(0).toUpperCase() + String(text || '').slice(1);
+function estimateSampleCountForMinutes(minutes) {
+    const cadence = Number.isFinite(state.status?.expectedCadenceMinutes)
+        ? Math.max(1, state.status.expectedCadenceMinutes)
+        : 15;
+    return Math.max(1, Math.round(minutes / cadence));
 }
 
-function describeFreshness() {
-    if (state.status?.publishedAt?.label && state.status?.sourceUpdatedAt?.label) {
-        return `Pubblicato alle ${state.status.publishedAt.label} · ultimo dato sorgente ${state.status.sourceUpdatedAt.label}`;
+function renderMetricState() {
+    const metric = METRICS[state.selectedMetric] || METRICS.temperature;
+    const latest = state.records[state.records.length - 1];
+    const latestValue = latest ? getMetricValue(latest, state.selectedMetric) : null;
+    const filteredRecords = filterRecordsByRange(state.records, state.selectedRange);
+    const rangeLabel = describeRange(state.selectedRange);
+
+    elements.metricButtons.forEach((button) => {
+        const metricName = button.dataset.metric;
+        const active = metricName === state.selectedMetric;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    elements.rangeButtons.forEach((button) => {
+        const active = button.dataset.range === state.selectedRange;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    elements.chartTitle.textContent = `Trend ${metric.label.toLowerCase()}`;
+    if (!state.records.length) {
+        elements.chartSubtitle.textContent = 'Nessun dato disponibile al momento.';
+    } else if (latestValue === null) {
+        elements.chartSubtitle.textContent = `${rangeLabel} · nessun valore valido per questa metrica.`;
+    } else {
+        elements.chartSubtitle.textContent = `${rangeLabel} · ultimo valore ${formatMetricValue(state.selectedMetric, latestValue)} · ${filteredRecords.length} punti in vista.`;
     }
 
-    if (state.status?.publishedAt?.label) {
-        return `Pubblicato alle ${state.status.publishedAt.label}`;
+    if (!elements.chartEmptyState) {
+        return;
     }
 
-    if (state.status?.sourceUpdatedAt?.label) {
-        return `Ultimo dato sorgente ${state.status.sourceUpdatedAt.label}`;
+    const shouldShowEmpty = !state.records.length || !window.Chart;
+    elements.chartEmptyState.hidden = !shouldShowEmpty;
+    elements.canvas.hidden = shouldShowEmpty;
+
+    if (shouldShowEmpty && !window.Chart) {
+        const title = elements.chartEmptyState.querySelector('h3');
+        const description = elements.chartEmptyState.querySelector('p:last-of-type');
+        if (title) {
+            title.textContent = 'Grafico non disponibile';
+        }
+        if (description) {
+            description.textContent = 'Caricamento della libreria grafica fallito.';
+        }
     }
 
-    return 'Freshness non dichiarata';
+    renderMetricSwitcher();
+    syncSummarySelectionState();
+}
+
+function renderMetricSwitcher() {
+    elements.metricButtons.forEach((button) => {
+        const metric = button.dataset.metric;
+        const available = state.availableMetrics.has(metric);
+        button.disabled = !available;
+        button.classList.toggle('is-disabled', !available);
+        button.setAttribute('aria-disabled', available ? 'false' : 'true');
+        button.title = available ? '' : 'Dato non disponibile';
+    });
 }
 
 function renderChart() {
@@ -713,8 +1114,7 @@ function renderChart() {
 
     const config = buildChartConfig(state.selectedMetric);
     if (!config) {
-        elements.chartEmptyState.hidden = false;
-        elements.canvas.hidden = true;
+        showEmptyChart('Nessun dato disponibile', 'Non ci sono punti utili nell intervallo selezionato.');
         return;
     }
 
@@ -734,13 +1134,17 @@ function buildChartConfig(metricName) {
         return null;
     }
 
+    const filteredRecords = filterRecordsByRange(state.records, state.selectedRange);
     const companionMetric = metric.companion ? METRICS[metric.companion] : null;
-    const chartRows = state.records
+    const latestSortKey = filteredRecords[filteredRecords.length - 1]?.sortKey ?? null;
+
+    const chartRows = filteredRecords
         .map((record) => {
             const primary = getMetricValue(record, metricName);
             const companion = metric.companion ? getMetricValue(record, metric.companion) : null;
             return {
-                label: record.label,
+                fullLabel: record.label,
+                tickLabel: buildAxisLabel(record.sortKey, latestSortKey),
                 primary,
                 companion,
             };
@@ -751,39 +1155,59 @@ function buildChartConfig(metricName) {
         return null;
     }
 
-    const labels = chartRows.map((row) => row.label);
-    const datasets = [{
-        label: metric.label,
-        data: chartRows.map((row) => row.primary),
-        borderColor: metric.color,
-        backgroundColor: hexToRgba(metric.color, 0.18),
-        pointBorderColor: '#ffffff',
-        pointBackgroundColor: metric.color,
-        pointRadius: 2,
-        pointHoverRadius: 5,
-        tension: 0.3,
-        borderWidth: 2,
-        fill: true,
-    }];
+    const labels = chartRows.map((row) => row.tickLabel);
+    const isRain = metricName === 'rain';
+    const datasetCount = companionMetric ? 2 : 1;
 
-    if (companionMetric) {
+    const datasets = isRain
+        ? [{
+            type: 'bar',
+            label: metric.label,
+            data: chartRows.map((row) => row.primary),
+            backgroundColor: hexToRgba(metric.color, 0.72),
+            borderColor: metric.color,
+            borderRadius: 8,
+            borderWidth: 1,
+            maxBarThickness: 18,
+        }]
+        : [{
+            type: 'line',
+            label: metric.label,
+            data: chartRows.map((row) => row.primary),
+            borderColor: metric.color,
+            backgroundColor: hexToRgba(metric.color, 0.16),
+            pointBackgroundColor: metric.color,
+            pointBorderColor: '#ffffff',
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            pointHitRadius: 18,
+            tension: 0.28,
+            borderWidth: 2.5,
+            fill: true,
+            spanGaps: true,
+        }];
+
+    if (!isRain && companionMetric) {
         datasets.push({
+            type: 'line',
             label: companionMetric.label,
             data: chartRows.map((row) => row.companion),
             borderColor: companionMetric.color,
             backgroundColor: hexToRgba(companionMetric.color, 0.12),
-            pointBorderColor: '#ffffff',
             pointBackgroundColor: companionMetric.color,
-            pointRadius: 2,
-            pointHoverRadius: 5,
-            tension: 0.3,
+            pointBorderColor: '#ffffff',
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            pointHitRadius: 18,
+            tension: 0.28,
             borderWidth: 2,
             fill: false,
+            spanGaps: true,
         });
     }
 
     return {
-        type: 'line',
+        type: isRain ? 'bar' : 'line',
         data: {
             labels,
             datasets,
@@ -797,13 +1221,14 @@ function buildChartConfig(metricName) {
             },
             plugins: {
                 legend: {
+                    display: datasetCount > 1,
                     position: 'top',
                     align: 'start',
                 },
                 tooltip: {
                     callbacks: {
                         title(context) {
-                            return context[0]?.label || '';
+                            return chartRows[context[0]?.dataIndex]?.fullLabel || '';
                         },
                         label(context) {
                             const datasetLabel = context.dataset.label || '';
@@ -812,10 +1237,15 @@ function buildChartConfig(metricName) {
                                 return `${datasetLabel}: n/d`;
                             }
 
-                            return `${datasetLabel}: ${formatNumber(value, 1)} ${metric.unit}`;
+                            const unit = context.dataset.label === companionMetric?.label ? companionMetric.unit : metric.unit;
+                            return `${datasetLabel}: ${formatMetricNumber(value, unitDigits(unit))}${unit ? ` ${unit}` : ''}`;
                         },
                     },
                 },
+                decimation: !isRain ? {
+                    enabled: chartRows.length > 80,
+                    algorithm: 'min-max',
+                } : undefined,
             },
             scales: {
                 x: {
@@ -823,26 +1253,82 @@ function buildChartConfig(metricName) {
                         display: false,
                     },
                     ticks: {
-                        maxRotation: 0,
                         autoSkip: true,
-                        color: '#c7d5ea',
+                        maxTicksLimit: getMaxTicks(),
+                        color: '#6b7f93',
                     },
                 },
                 y: {
+                    beginAtZero: isRain,
                     title: {
                         display: true,
                         text: metric.axisLabel,
+                        color: '#5f7185',
                     },
                     ticks: {
-                        color: '#c7d5ea',
+                        color: '#6b7f93',
                     },
                     grid: {
-                        color: 'rgba(199, 213, 234, 0.12)',
+                        color: 'rgba(95, 113, 133, 0.12)',
                     },
                 },
             },
         },
     };
+}
+
+function getMaxTicks() {
+    if (window.innerWidth <= 480) {
+        return 4;
+    }
+
+    if (window.innerWidth <= 700) {
+        return 5;
+    }
+
+    if (window.innerWidth <= 960) {
+        return 7;
+    }
+
+    return 9;
+}
+
+function filterRecordsByRange(records, rangeKey) {
+    if (!records.length || !RANGE_OPTIONS[rangeKey]) {
+        return records;
+    }
+
+    const latestRecord = records[records.length - 1];
+    const minutes = RANGE_OPTIONS[rangeKey].minutes;
+
+    if (!Number.isFinite(latestRecord.sortKey)) {
+        return records.slice(-estimateSampleCountForMinutes(minutes));
+    }
+
+    const cutoff = latestRecord.sortKey - (minutes * 60000);
+    const filtered = records.filter((record) => Number.isFinite(record.sortKey) && record.sortKey >= cutoff);
+    if (filtered.length >= 2) {
+        return filtered;
+    }
+
+    return records.slice(-estimateSampleCountForMinutes(minutes));
+}
+
+function buildAxisLabel(sortKey, referenceSortKey) {
+    if (!Number.isFinite(sortKey)) {
+        return '';
+    }
+
+    const date = new Date(sortKey);
+    const referenceDate = Number.isFinite(referenceSortKey) ? new Date(referenceSortKey) : null;
+    const sameDay = referenceDate
+        && date.getDate() === referenceDate.getDate()
+        && date.getMonth() === referenceDate.getMonth()
+        && date.getFullYear() === referenceDate.getFullYear();
+
+    return sameDay
+        ? new Intl.DateTimeFormat('it-IT', { hour: '2-digit', minute: '2-digit' }).format(date)
+        : new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
 function getMetricValue(record, metric) {
@@ -882,43 +1368,47 @@ function hexToRgba(hex, alpha) {
 function renderHealth() {
     const status = state.status;
     const freshnessIsStale = isFreshnessStale(status);
-    const hasWarning = freshnessIsStale || status?.stale || status?.status === 'degraded';
+    const hasWarning = freshnessIsStale || status?.status === 'degraded' || status?.stale;
     const hasError = status?.status === 'error' || !state.records.length;
 
     if (hasError && !state.records.length) {
         setPill('Dati non disponibili', 'is-error');
-        setBanner('Non e stato possibile caricare i dati della stazione. Controlla che `data/series.json` e `data/status.json` siano pubblicati dal workflow.', 'error');
+        setBanner('Non riesco a caricare i dati della stazione in questo momento.', 'error');
+        elements.freshnessSummary.textContent = 'Dati non disponibili al momento.';
         elements.lastUpdate.textContent = 'Ultimo aggiornamento: non disponibile';
         return;
     }
 
     if (hasWarning) {
-        const pillText = status?.status === 'degraded' && !status?.stale ? 'Sorgente in ritardo' : 'Dato stale';
+        const pillText = freshnessIsStale ? 'Dato non fresco' : 'Sorgente in ritardo';
         setPill(pillText, 'is-stale');
         setBanner(buildWarningMessage(), 'warning');
-        updateLastUpdateLine();
+        elements.freshnessSummary.textContent = buildFreshnessHeadline();
+        elements.lastUpdate.textContent = buildUpdateLine();
         return;
     }
 
-    setPill('Dati live', 'is-live');
+    setPill('Dati aggiornati', 'is-live');
     clearBanner();
-    updateLastUpdateLine();
+    elements.freshnessSummary.textContent = buildFreshnessHeadline();
+    elements.lastUpdate.textContent = buildUpdateLine();
 }
 
 function buildWarningMessage() {
-    if (state.status?.status === 'degraded' && state.status?.publishedAt?.label && state.status?.sourceUpdatedAt?.label) {
-        return `Ultima pubblicazione ${state.status.publishedAt.label}, ma MeteoProject espone ancora come ultimo dato ${state.status.sourceUpdatedAt.label}. Il problema e a monte, non nel deploy del sito.`;
+    const ageMinutes = getObservationAgeMinutes();
+    if (ageMinutes !== null && ageMinutes > getStaleThreshold()) {
+        return `Il dato piu recente risale a ${formatAge(ageMinutes)} fa. Leggilo come ultimo valore valido, non come live.`;
+    }
+
+    if (ageMinutes !== null) {
+        return `La sorgente e in ritardo: l ultimo dato disponibile risale a ${formatAge(ageMinutes)} fa.`;
     }
 
     if (state.status?.message) {
-        return state.status.message;
+        return sanitizeText(state.status.message);
     }
 
-    if (state.status?.sourceUpdatedAt?.label) {
-        return `La sorgente segnala un dato non fresco. Ultimo dato noto: ${state.status.sourceUpdatedAt.label}.`;
-    }
-
-    return 'La sorgente dati e temporaneamente degradata. Il grafico mostra l ultimo dato valido disponibile.';
+    return 'La sorgente dati e temporaneamente in ritardo.';
 }
 
 function isFreshnessStale(status) {
@@ -930,40 +1420,40 @@ function isFreshnessStale(status) {
         return true;
     }
 
-    const referenceDate = status.sourceUpdatedAt?.sortKey ? new Date(status.sourceUpdatedAt.sortKey) : null;
-    if (!referenceDate) {
-        return false;
-    }
-
-    const ageMinutes = (Date.now() - referenceDate.getTime()) / 60000;
-    const rawThreshold = state.status?.raw?.staleAfterMinutes;
-    const threshold = Number.isFinite(Number(rawThreshold)) ? Number(rawThreshold) : STALE_THRESHOLD_MINUTES;
-    return Number.isFinite(ageMinutes) && ageMinutes > threshold;
+    const ageMinutes = getObservationAgeMinutes();
+    return ageMinutes !== null && ageMinutes > getStaleThreshold();
 }
 
-function updateLastUpdateLine() {
-    const latest = state.records[state.records.length - 1];
-    const publishedLabel = state.status?.publishedAt?.label || null;
-    const sourceLabel = state.status?.sourceUpdatedAt?.label || latest?.label || 'n/d';
-    const rowCount = state.status?.rowCount || state.records.length;
-    const suffix = rowCount ? ` · ${rowCount} campioni` : '';
-
-    if (publishedLabel) {
-        elements.lastUpdate.textContent = `Ultima pubblicazione: ${publishedLabel} · ultimo dato sorgente: ${sourceLabel}${suffix}`;
-        return;
+function getObservationAgeMinutes() {
+    if (Number.isFinite(state.status?.observationAgeMinutes)) {
+        return state.status.observationAgeMinutes;
     }
 
-    elements.lastUpdate.textContent = `Ultimo dato sorgente: ${sourceLabel}${suffix}`;
+    if (state.status?.sourceUpdatedAt?.sortKey) {
+        return (Date.now() - state.status.sourceUpdatedAt.sortKey) / 60000;
+    }
+
+    return null;
+}
+
+function getStaleThreshold() {
+    const rawThreshold = state.status?.raw?.staleAfterMinutes;
+    return Number.isFinite(Number(rawThreshold)) ? Number(rawThreshold) : STALE_THRESHOLD_MINUTES;
 }
 
 function setLoadingState(isLoading, { initial = false, silent = false, failure = false } = {}) {
     elements.refreshNow.disabled = isLoading;
-    elements.refreshNow.textContent = isLoading ? 'Aggiornamento...' : 'Aggiorna ora';
+    elements.refreshNow.textContent = isLoading ? 'Aggiornamento...' : 'Aggiorna';
 
     if (isLoading && !silent) {
         setPill(initial ? 'Caricamento dati' : 'Aggiornamento in corso', 'is-loading');
         if (initial) {
-            setBanner('Caricamento dati dalla sorgente in corso.', 'info');
+            setBanner('Sto caricando i dati piu recenti della stazione.', 'info');
+        }
+
+        if (!state.records.length) {
+            renderSummarySkeleton();
+            renderHeroEmpty();
         }
         return;
     }
@@ -1003,23 +1493,64 @@ function clearBanner() {
 
 function renderFailure(error) {
     if (!state.records.length) {
-        elements.chartEmptyState.hidden = false;
-        elements.canvas.hidden = true;
+        showEmptyChart('Dati non disponibili', 'Non riesco a mostrare il grafico senza un campione valido.');
+        renderHeroEmpty();
     }
 
-    const message = error?.message || 'Errore sconosciuto';
+    const message = sanitizeText(error?.message || 'Errore sconosciuto');
     if (state.records.length) {
-        setBanner(`Aggiornamento fallito. Sto mantenendo l ultimo dato valido. Dettaglio: ${message}`, 'warning');
+        setBanner(`Aggiornamento fallito. Sto mostrando l ultimo dato valido. Dettaglio: ${message}`, 'warning');
         setPill('Aggiornamento fallito', 'is-stale');
-        updateLastUpdateLine();
+        elements.freshnessSummary.textContent = 'Aggiornamento fallito: sto mantenendo l ultimo dato valido.';
+        elements.lastUpdate.textContent = buildUpdateLine();
         return;
     }
 
     setBanner(`Impossibile caricare i dati. Dettaglio: ${message}`, 'error');
     setPill('Errore sorgente', 'is-error');
+    elements.freshnessSummary.textContent = 'Dati non disponibili al momento.';
     elements.lastUpdate.textContent = 'Ultimo aggiornamento: non disponibile';
     elements.summaryMeta.textContent = 'Nessun dato disponibile';
-    elements.summaryGrid.replaceChildren(createSummaryCard('Stato', 'n/d', 'Attendi il prossimo refresh'));
+    elements.summaryPrimary.replaceChildren();
+    elements.summarySecondary.replaceChildren(createInfoCard('Stato', 'n/d', 'Attendi il prossimo refresh'));
+    renderStatusDetails();
+}
+
+function createInfoCard(label, value, note) {
+    const card = document.createElement('div');
+    card.className = 'summary-card is-secondary';
+
+    const title = document.createElement('p');
+    title.className = 'summary-label';
+    title.textContent = label;
+
+    const reading = document.createElement('p');
+    reading.className = 'summary-value';
+    reading.textContent = value;
+
+    const noteElement = document.createElement('p');
+    noteElement.className = 'summary-note';
+    noteElement.textContent = note;
+
+    card.append(title, reading, noteElement);
+    return card;
+}
+
+function showEmptyChart(titleText, descriptionText) {
+    const title = elements.chartEmptyState?.querySelector('h3');
+    const description = elements.chartEmptyState?.querySelector('p:last-of-type');
+    if (title) {
+        title.textContent = titleText;
+    }
+    if (description) {
+        description.textContent = descriptionText;
+    }
+    if (elements.chartEmptyState) {
+        elements.chartEmptyState.hidden = false;
+    }
+    if (elements.canvas) {
+        elements.canvas.hidden = true;
+    }
 }
 
 function degreesToDirection(degrees) {
@@ -1041,48 +1572,119 @@ function formatMetricValue(metric, value) {
     return formatMetricCard(metric, value);
 }
 
-function getLatestMetricValue(metric) {
-    const latest = state.records[state.records.length - 1];
-    return latest ? getMetricValue(latest, metric) : null;
+function formatMetricCard(metric, value) {
+    if (value === null || value === undefined || Number.isNaN(value)) {
+        return 'n/d';
+    }
+
+    switch (metric) {
+        case 'temperature':
+        case 'dewPoint':
+            return `${formatMetricNumber(value, 1)} C`;
+        case 'humidity':
+            return `${formatMetricNumber(value, 0)} %`;
+        case 'pressure':
+            return `${formatMetricNumber(value, 1)} hPa`;
+        case 'wind':
+        case 'gust':
+            return `${formatMetricNumber(value, 1)} km/h`;
+        case 'rain':
+            return `${formatMetricNumber(value, 1)} mm`;
+        default:
+            return formatMetricNumber(value, 1);
+    }
 }
 
-function renderMetricState() {
-    const metric = METRICS[state.selectedMetric] || METRICS.temperature;
-    const latest = state.records[state.records.length - 1];
-    const latestValue = latest ? getMetricValue(latest, state.selectedMetric) : null;
-
-    elements.metricButtons.forEach((button) => {
-        const metricName = button.dataset.metric;
-        button.classList.toggle('is-active', metricName === state.selectedMetric);
-    });
-
-    elements.chartTitle.textContent = metric.label;
-    if (!state.records.length) {
-        elements.chartSubtitle.textContent = 'Nessun dato disponibile al momento.';
-    } else if (latestValue === null) {
-        elements.chartSubtitle.textContent = `Serie disponibile da ${state.records.length} campioni.`;
-    } else {
-        elements.chartSubtitle.textContent = `Ultimo campione ${latest.label} · valore attuale ${formatMetricCard(state.selectedMetric, latestValue)}.`;
+function formatDirectionCard(value) {
+    if (value === null || value === undefined || value === '') {
+        return 'n/d';
     }
 
-    if (!elements.chartEmptyState) {
-        return;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return `${degreesToDirection(value)} (${Math.round(value)} deg)`;
     }
 
-    const shouldShowEmpty = !state.records.length || !window.Chart;
-    elements.chartEmptyState.hidden = !shouldShowEmpty;
-    elements.canvas.hidden = shouldShowEmpty;
-
-    if (shouldShowEmpty && !window.Chart) {
-        const title = elements.chartEmptyState.querySelector('h3');
-        const description = elements.chartEmptyState.querySelector('p');
-        if (title) {
-            title.textContent = 'Chart.js non e disponibile';
-        }
-        if (description) {
-            description.textContent = 'Caricamento libreria grafico fallito.';
-        }
+    const numeric = Number(String(value).replace(',', '.'));
+    if (Number.isFinite(numeric)) {
+        return `${degreesToDirection(numeric)} (${Math.round(numeric)} deg)`;
     }
 
-    renderMetricSwitcher();
+    return String(value);
+}
+
+function formatMetricNumber(value, digits = 1) {
+    return new Intl.NumberFormat('it-IT', {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
+    }).format(value);
+}
+
+function unitDigits(unit) {
+    if (unit === '%') {
+        return 0;
+    }
+    return 1;
+}
+
+function describeRange(rangeKey) {
+    const option = RANGE_OPTIONS[rangeKey];
+    if (!option) {
+        return 'Intervallo corrente';
+    }
+
+    if (rangeKey === '1h') {
+        return 'Ultima ora';
+    }
+
+    return `Ultime ${option.label}`;
+}
+
+function describeWind(value) {
+    if (!Number.isFinite(value)) {
+        return 'non disponibile';
+    }
+
+    if (value < 5) {
+        return 'debole';
+    }
+
+    if (value < 15) {
+        return 'moderato';
+    }
+
+    if (value < 30) {
+        return 'sostenuto';
+    }
+
+    return 'forte';
+}
+
+function formatAge(minutes) {
+    const rounded = Math.max(0, Math.round(minutes));
+    if (rounded < 60) {
+        return `${rounded} min`;
+    }
+
+    const hours = Math.floor(rounded / 60);
+    const mins = rounded % 60;
+    if (mins === 0) {
+        return `${hours} h`;
+    }
+
+    return `${hours} h ${mins} min`;
+}
+
+function capitalizeSentence(text) {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) {
+        return '';
+    }
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+function sanitizeText(text) {
+    return String(text || '')
+        .replace(/`/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
