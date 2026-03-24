@@ -1,0 +1,48 @@
+{
+  "ok": true,
+  "status": "degraded",
+  "message": "La sorgente e in ritardo di 59.2 minuti rispetto alla cadenza attesa di 15 minuti",
+  "generatedAt": "2026-03-24T10:59:10.457182+01:00",
+  "publishedAt": "2026-03-24T10:59:10.457182+01:00",
+  "lastObservationAt": "2026-03-24T10:00:00+01:00",
+  "sourceUpdatedAt": "2026-03-24T10:00:00+01:00",
+  "observationAgeMinutes": 59.2,
+  "expectedCadenceMinutes": 15,
+  "staleAfterMinutes": 90,
+  "stale": false,
+  "rowCount": 137,
+  "observationCount": 137,
+  "triggerArchiveRefresh": {
+    "attempted": true,
+    "ok": true,
+    "details": "Archive refresh acknowledged by source"
+  },
+  "metrics": {
+    "raw_row_count": 141,
+    "observation_count": 137,
+    "skipped_footer_rows": 2,
+    "skipped_empty_rows": 1
+  },
+  "checks": [
+    {
+      "name": "freshness",
+      "ok": true,
+      "details": "Last observation at 2026-03-24T10:00:00+01:00 (59.2 minutes old)"
+    },
+    {
+      "name": "cadence",
+      "ok": true,
+      "details": "Observed max gap 15 minutes"
+    },
+    {
+      "name": "ranges",
+      "ok": true,
+      "details": "All numeric values are within expected bounds"
+    }
+  ],
+  "warnings": [],
+  "source": {
+    "archiveUrl": "https://stazioni.meteoproject.it/dati/montenero/archivio.php",
+    "lookbackDays": 1
+  }
+}

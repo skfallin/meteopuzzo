@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Validate Python syntax
+        run: python -m py_compile update_data.py "Update Data.py"
+
+      - name: Run Python tests
+        run: python -m pytest
+
+      - name: Validate JavaScript syntax
+        run: node --check script.js
+
+      - name: Validate committed data artifacts
+        run: |
+          python <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          data_dir = Path("data")
+          required = [
+              data_dir / "latest.csv",
+              data_dir / "series.json",
+              data_dir / "status.json",
+          ]
+          for path in required:
+              if not path.exists():
+                  raise SystemExit(f"Missing artifact: {path}")
+
+          with (data_dir / "series.json").open(encoding="utf-8") as handle:
+              series = json.load(handle)
+          if not series.get("records"):
+              raise SystemExit("data/series.json does not contain any records")
+
+          with (data_dir / "status.json").open(encoding="utf-8") as handle:
+              status = json.load(handle)
+          if "stale" not in status or "rowCount" not in status:
+              raise SystemExit("data/status.json is missing required fields")
+
+          with (data_dir / "latest.csv").open(newline="", encoding="utf-8") as handle:
+              rows = list(csv.reader(handle))
+          if len(rows) < 2:
+              raise SystemExit("data/latest.csv does not contain any observations")
+          PY

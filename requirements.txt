@@ -1,2 +1,2 @@
-requests
-pandas 
+pytest==8.3.5
+requests==2.32.3

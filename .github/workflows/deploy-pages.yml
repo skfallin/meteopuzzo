@@ -1,0 +1,97 @@
+name: Deploy Pages
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: pages-site
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Refresh live data
+        if: github.event_name != 'push'
+        run: python update_data.py
+
+      - name: Validate publishable artifacts
+        run: |
+          python <<'PY'
+          import json
+          from pathlib import Path
+
+          data_dir = Path("data")
+          required = [
+              Path("index.html"),
+              Path("style.css"),
+              Path("script.js"),
+              Path("vendor/chart.umd.min.js"),
+              data_dir / "latest.csv",
+              data_dir / "series.json",
+              data_dir / "status.json",
+          ]
+          for path in required:
+              if not path.exists():
+                  raise SystemExit(f"Missing artifact: {path}")
+
+          with (data_dir / "series.json").open(encoding="utf-8") as handle:
+              series = json.load(handle)
+          if not series.get("records"):
+              raise SystemExit("data/series.json has no records")
+
+          with (data_dir / "status.json").open(encoding="utf-8") as handle:
+              status = json.load(handle)
+          if "status" not in status or "stale" not in status:
+              raise SystemExit("data/status.json is missing required keys")
+          PY
+
+      - name: Build Pages artifact
+        run: |
+          set -euo pipefail
+          rm -rf site
+          mkdir -p site/data
+          mkdir -p site/vendor
+          cp index.html site/index.html
+          cp index.htm site/index.htm
+          cp style.css site/style.css
+          cp script.js site/script.js
+          cp vendor/chart.umd.min.js site/vendor/chart.umd.min.js
+          cp -R data/. site/data/
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

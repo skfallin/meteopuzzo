@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#07111d">
+    <title>Stazione Meteo Montenero</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="vendor/chart.umd.min.js" defer></script>
+    <script src="script.js" defer></script>
+</head>
+<body>
+    <div class="page-shell">
+        <header class="hero">
+            <div class="hero-copy">
+                <p class="eyebrow">Stazione Meteo Montenero</p>
+                <h1>Dati meteorologici live, puliti e leggibili</h1>
+                <p class="subtitle">
+                    Il frontend consuma <code>data/series.json</code> e <code>data/status.json</code>, mostra il dato piu recente
+                    e segnala subito se la sorgente e in ritardo o degradata.
+                </p>
+            </div>
+
+            <div class="hero-meta" aria-live="polite">
+                <div id="connectionPill" class="status-pill is-loading">Caricamento dati</div>
+                <p id="lastUpdate" class="last-update">Ultimo aggiornamento: in attesa dei dati</p>
+                <button id="refreshNow" class="ghost-button" type="button">Aggiorna ora</button>
+            </div>
+        </header>
+
+        <main class="app-grid">
+            <section class="panel panel-summary" aria-labelledby="summaryTitle">
+                <div class="panel-head">
+                    <div>
+                        <p class="panel-kicker">Panoramica</p>
+                        <h2 id="summaryTitle">Ultimi valori disponibili</h2>
+                    </div>
+                    <p id="summaryMeta" class="panel-meta">Caricamento dati in corso</p>
+                </div>
+                <div id="summaryGrid" class="summary-grid" aria-live="polite"></div>
+            </section>
+
+            <section class="panel panel-chart" aria-labelledby="chartTitle">
+                <div class="panel-head panel-head-stack">
+                    <div>
+                        <p class="panel-kicker">Trend</p>
+                        <h2 id="chartTitle">Andamento serie</h2>
+                        <p id="chartSubtitle" class="panel-meta">Seleziona una metrica per esplorare i dati.</p>
+                    </div>
+                    <div class="metric-switcher" role="tablist" aria-label="Seleziona metrica">
+                        <button class="metric-button is-active" type="button" data-metric="temperature">Temperatura</button>
+                        <button class="metric-button" type="button" data-metric="humidity">Umidita</button>
+                        <button class="metric-button" type="button" data-metric="pressure">Pressione</button>
+                        <button class="metric-button" type="button" data-metric="wind">Vento</button>
+                        <button class="metric-button" type="button" data-metric="rain">Pioggia</button>
+                    </div>
+                </div>
+
+                <div class="chart-frame">
+                    <div id="chartEmptyState" class="empty-state">
+                        <div class="empty-state-inner">
+                            <p class="empty-kicker">Attesa dati</p>
+                            <h3>Nessuna serie disponibile al momento</h3>
+                            <p>Verifica che <code>data/series.json</code> e <code>data/status.json</code> siano pubblicati dal workflow.</p>
+                        </div>
+                    </div>
+                    <canvas id="myChart" aria-describedby="chartDescription"></canvas>
+                    <p id="chartDescription" class="sr-only">
+                        Grafico interattivo dei dati meteorologici. Usa i pulsanti sopra per cambiare metrica.
+                    </p>
+                </div>
+            </section>
+
+            <section id="statusBanner" class="status-banner" role="status" aria-live="polite" hidden></section>
+        </main>
+
+        <footer class="site-footer">
+            <p>
+                Fonte:
+                <a href="https://stazioni.meteoproject.it/dati/montenero/" target="_blank" rel="noopener noreferrer">
+                    MeteoProject
+                </a>
+            </p>
+            <p>Refresh automatico ogni 5 minuti.</p>
+        </footer>
+    </div>
+</body>
+</html>

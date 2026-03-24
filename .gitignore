@@ -27,6 +27,8 @@ weather_update.log
 venv/
 ENV/
 .venv/
+.pytest_cache/
+site/
 
 # IDE
 .vscode/
@@ -34,4 +36,4 @@ ENV/
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
