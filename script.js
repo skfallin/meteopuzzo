@@ -691,6 +691,10 @@ function capitalize(text) {
 }
 
 function describeFreshness() {
+    if (state.status?.publishedAt?.label && state.status?.sourceUpdatedAt?.label) {
+        return `Pubblicato alle ${state.status.publishedAt.label} · ultimo dato sorgente ${state.status.sourceUpdatedAt.label}`;
+    }
+
     if (state.status?.publishedAt?.label) {
         return `Pubblicato alle ${state.status.publishedAt.label}`;
     }
@@ -902,6 +906,10 @@ function renderHealth() {
 }
 
 function buildWarningMessage() {
+    if (state.status?.status === 'degraded' && state.status?.publishedAt?.label && state.status?.sourceUpdatedAt?.label) {
+        return `Ultima pubblicazione ${state.status.publishedAt.label}, ma MeteoProject espone ancora come ultimo dato ${state.status.sourceUpdatedAt.label}. Il problema e a monte, non nel deploy del sito.`;
+    }
+
     if (state.status?.message) {
         return state.status.message;
     }
@@ -935,10 +943,17 @@ function isFreshnessStale(status) {
 
 function updateLastUpdateLine() {
     const latest = state.records[state.records.length - 1];
-    const statusLabel = state.status?.publishedAt?.label || state.status?.sourceUpdatedAt?.label || latest?.label || 'n/d';
+    const publishedLabel = state.status?.publishedAt?.label || null;
+    const sourceLabel = state.status?.sourceUpdatedAt?.label || latest?.label || 'n/d';
     const rowCount = state.status?.rowCount || state.records.length;
     const suffix = rowCount ? ` · ${rowCount} campioni` : '';
-    elements.lastUpdate.textContent = `Ultimo aggiornamento: ${statusLabel}${suffix}`;
+
+    if (publishedLabel) {
+        elements.lastUpdate.textContent = `Ultima pubblicazione: ${publishedLabel} · ultimo dato sorgente: ${sourceLabel}${suffix}`;
+        return;
+    }
+
+    elements.lastUpdate.textContent = `Ultimo dato sorgente: ${sourceLabel}${suffix}`;
 }
 
 function setLoadingState(isLoading, { initial = false, silent = false, failure = false } = {}) {
