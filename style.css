@@ -88,7 +88,7 @@ code {
 
 .hero {
     display: grid;
-    grid-template-columns: minmax(0, 1.7fr) minmax(260px, 0.58fr);
+    grid-template-columns: 1fr;
     gap: 20px;
     align-items: start;
     margin-bottom: 18px;
@@ -210,11 +210,34 @@ code {
 
 .hero-status {
     display: grid;
+    grid-template-columns: minmax(0, 0.86fr) minmax(320px, 1.14fr);
     align-content: start;
+    align-items: start;
+    column-gap: 18px;
     gap: 12px;
     width: 100%;
-    max-width: 360px;
-    justify-self: end;
+    max-width: none;
+    justify-self: stretch;
+}
+
+.page-status {
+    margin-top: 18px;
+}
+
+.hero-status > * {
+    min-width: 0;
+}
+
+.hero-status > #connectionPill,
+.hero-status > .status-headline,
+.hero-status > .last-update,
+.hero-status > .hero-actions {
+    grid-column: 1;
+}
+
+.hero-status > .refresh-monitor,
+.hero-status > .status-details {
+    grid-column: 2;
 }
 
 .status-pill {
@@ -285,6 +308,129 @@ code {
     display: flex;
     align-items: center;
     gap: 10px;
+}
+
+.refresh-monitor {
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 249, 255, 0.88));
+}
+
+.refresh-monitor-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.refresh-monitor-kicker {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.refresh-monitor-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.42rem 0.72rem;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
+.refresh-monitor-badge::before {
+    content: '';
+    width: 0.48rem;
+    height: 0.48rem;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.refresh-monitor-badge.is-idle,
+.refresh-monitor-badge.is-loading {
+    color: var(--accent);
+    background: rgba(28, 141, 216, 0.12);
+    border-color: rgba(28, 141, 216, 0.22);
+}
+
+.refresh-monitor-badge.is-loading::before {
+    animation: pulse 1s ease-in-out infinite;
+}
+
+.refresh-monitor-badge.is-waiting {
+    color: var(--warning);
+    background: rgba(183, 121, 31, 0.12);
+    border-color: rgba(183, 121, 31, 0.22);
+}
+
+.refresh-monitor-badge.is-live {
+    color: var(--accent-green);
+    background: rgba(31, 159, 120, 0.12);
+    border-color: rgba(31, 159, 120, 0.22);
+}
+
+.refresh-monitor-badge.is-error {
+    color: var(--danger);
+    background: rgba(216, 79, 105, 0.12);
+    border-color: rgba(216, 79, 105, 0.2);
+}
+
+.refresh-monitor-title,
+.refresh-monitor-body {
+    margin: 0;
+}
+
+.refresh-monitor-title {
+    font-size: 0.98rem;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.refresh-monitor-body {
+    color: var(--muted);
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+.refresh-monitor-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin: 0;
+}
+
+.refresh-monitor-cell {
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.72);
+}
+
+.refresh-monitor-cell dt {
+    margin: 0 0 6px;
+    color: var(--muted-soft);
+    font-size: 0.73rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.refresh-monitor-cell dd {
+    margin: 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.9rem;
+    font-weight: 600;
+    line-height: 1.4;
 }
 
 .ghost-button,
@@ -707,14 +853,33 @@ a:focus-visible {
     }
 }
 
-@media (max-width: 960px) {
-    .hero {
-        grid-template-columns: 1fr;
+@keyframes pulse {
+    0%,
+    100% {
+        opacity: 0.55;
+        transform: scale(0.9);
     }
 
+    50% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@media (max-width: 960px) {
     .hero-status {
+        grid-template-columns: 1fr;
         max-width: none;
         justify-self: stretch;
+    }
+
+    .hero-status > #connectionPill,
+    .hero-status > .status-headline,
+    .hero-status > .last-update,
+    .hero-status > .hero-actions,
+    .hero-status > .refresh-monitor,
+    .hero-status > .status-details {
+        grid-column: 1;
     }
 
     .panel-head {
@@ -767,6 +932,10 @@ a:focus-visible {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .refresh-monitor-grid {
+        grid-template-columns: 1fr;
+    }
+
     .metric-switcher,
     .range-switcher {
         flex-wrap: nowrap;
@@ -807,6 +976,11 @@ a:focus-visible {
 
     .summary-note {
         font-size: 0.88rem;
+    }
+
+    .refresh-monitor-head {
+        align-items: flex-start;
+        flex-direction: column;
     }
 
     .chart-frame,

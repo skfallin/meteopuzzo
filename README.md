@@ -24,7 +24,7 @@ Dashboard meteo statico pubblicato su GitHub Pages e aggiornato da GitHub Action
   - valida gli artefatti in `data/`
 - `Deploy Pages`
   - gira su `push` a `main`, `workflow_dispatch` e schedule ogni 15 minuti
-  - su schedule/manual esegue `python update_data.py`
+  - esegue sempre `python update_data.py` prima di costruire l'artifact Pages
   - costruisce un artifact statico con `index.html`, `index.htm`, `style.css`, `script.js` e `data/`
   - pubblica su GitHub Pages
 
@@ -63,6 +63,6 @@ Dashboard meteo statico pubblicato su GitHub Pages e aggiornato da GitHub Action
 
 ## Note Operative
 
-- Se MeteoProject non risponde o pubblica dati troppo vecchi, il workflow schedulato fallisce e GitHub Pages continua a servire l’ultima versione valida.
-- Il frontend mostra comunque lo stato stale usando `data/status.json`.
+- Se MeteoProject non risponde o restituisce un CSV malformato, il deploy fallisce e GitHub Pages continua a servire l’ultima versione valida.
+- Se MeteoProject risponde ma non ha ancora pubblicato un dato piu recente, la pipeline pubblica comunque gli artefatti marcandoli come `stale` in `data/status.json`.
 - [`Update Data.py`](/Users/fra/Documents/code/personal/meteopuzzo/Update%20Data.py) resta come wrapper compatibile, ma l’entrypoint vero e supportato e `update_data.py`.

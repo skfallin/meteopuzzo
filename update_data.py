@@ -370,10 +370,8 @@ def validate_observations(
             ),
         }
     )
-    if not freshness_ok:
-        raise PipelineError(
-            f"Latest observation is stale: {age_minutes} minutes old (threshold {max_stale_minutes})"
-        )
+    # Freshness is surfaced in status.json so the static frontend can warn without
+    # getting stuck on the last successful publish.
 
     gaps = []
     for previous, current in zip(observations, observations[1:]):
@@ -469,12 +467,15 @@ def build_status_payload(
     if age_minutes > (config.expected_cadence_minutes * 2):
         status = "degraded"
         message = (
-            f"La sorgente e in ritardo di {age_minutes} minuti rispetto alla cadenza attesa di "
-            f"{config.expected_cadence_minutes} minuti"
+            f"La fonte principale non ha ancora pubblicato un dato piu recente; "
+            f"ultimo dato disponibile di {age_minutes} minuti fa"
         )
     if age_minutes > config.max_stale_minutes:
         status = "stale"
-        message = f"Ultimo dato disponibile vecchio di {age_minutes} minuti"
+        message = (
+            f"La fonte principale non ha ancora pubblicato un nuovo aggiornamento; "
+            f"sto mostrando l ultimo dato disponibile di {age_minutes} minuti fa"
+        )
 
     return {
         "ok": True,

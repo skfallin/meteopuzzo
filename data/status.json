@@ -1,25 +1,25 @@
 {
   "ok": true,
   "status": "degraded",
-  "message": "La sorgente e in ritardo di 59.2 minuti rispetto alla cadenza attesa di 15 minuti",
-  "generatedAt": "2026-03-24T10:59:10.457182+01:00",
-  "publishedAt": "2026-03-24T10:59:10.457182+01:00",
-  "lastObservationAt": "2026-03-24T10:00:00+01:00",
-  "sourceUpdatedAt": "2026-03-24T10:00:00+01:00",
-  "observationAgeMinutes": 59.2,
+  "message": "La fonte principale non ha ancora pubblicato un dato piu recente; ultimo dato disponibile di 49.8 minuti fa",
+  "generatedAt": "2026-03-24T12:49:48.755819+01:00",
+  "publishedAt": "2026-03-24T12:49:48.755819+01:00",
+  "lastObservationAt": "2026-03-24T12:00:00+01:00",
+  "sourceUpdatedAt": "2026-03-24T12:00:00+01:00",
+  "observationAgeMinutes": 49.8,
   "expectedCadenceMinutes": 15,
   "staleAfterMinutes": 90,
   "stale": false,
-  "rowCount": 137,
-  "observationCount": 137,
+  "rowCount": 145,
+  "observationCount": 145,
   "triggerArchiveRefresh": {
     "attempted": true,
     "ok": true,
     "details": "Archive refresh acknowledged by source"
   },
   "metrics": {
-    "raw_row_count": 141,
-    "observation_count": 137,
+    "raw_row_count": 149,
+    "observation_count": 145,
     "skipped_footer_rows": 2,
     "skipped_empty_rows": 1
   },
@@ -27,7 +27,7 @@
     {
       "name": "freshness",
       "ok": true,
-      "details": "Last observation at 2026-03-24T10:00:00+01:00 (59.2 minutes old)"
+      "details": "Last observation at 2026-03-24T12:00:00+01:00 (49.8 minutes old)"
     },
     {
       "name": "cadence",

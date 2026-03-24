@@ -49,20 +49,6 @@
                     <p class="subtitle">Lettura immediata delle condizioni correnti e del trend recente.</p>
                 </div>
             </div>
-
-            <aside class="hero-status" aria-live="polite">
-                <div id="connectionPill" class="status-pill is-loading">Caricamento dati</div>
-                <p id="freshnessSummary" class="status-headline">Sto recuperando gli ultimi dati disponibili.</p>
-                <p id="lastUpdate" class="last-update">Ultimo aggiornamento: in attesa dei dati</p>
-                <div class="hero-actions">
-                    <button id="refreshNow" class="ghost-button" type="button">Aggiorna</button>
-                </div>
-
-                <details id="statusDetails" class="status-details">
-                    <summary id="statusDetailsSummary">Dettagli affidabilita</summary>
-                    <ul id="statusDetailsList" class="status-details-list"></ul>
-                </details>
-            </aside>
         </header>
 
         <main class="app-grid">
@@ -130,6 +116,43 @@
             </section>
         </main>
 
+        <aside class="hero-status page-status" aria-live="polite">
+            <div id="connectionPill" class="status-pill is-loading">Caricamento dati</div>
+            <p id="freshnessSummary" class="status-headline">Sto recuperando gli ultimi dati disponibili.</p>
+            <p id="lastUpdate" class="last-update">Ultimo aggiornamento: in attesa dei dati</p>
+            <div class="hero-actions">
+                <button id="refreshNow" class="ghost-button" type="button">Ricarica</button>
+            </div>
+
+            <section id="refreshMonitor" class="refresh-monitor" aria-live="polite">
+                <div class="refresh-monitor-head">
+                    <p class="refresh-monitor-kicker">Controllo aggiornamenti</p>
+                    <div id="refreshMonitorBadge" class="refresh-monitor-badge is-idle">In attesa</div>
+                </div>
+                <p id="refreshMonitorTitle" class="refresh-monitor-title">Sto preparando il primo controllo dei dati pubblicati.</p>
+                <p id="refreshMonitorBody" class="refresh-monitor-body">Quando ricarichi, qui ti mostro se il sito ha pubblicato un nuovo file e se la fonte principale contiene un nuovo dato.</p>
+                <dl class="refresh-monitor-grid">
+                    <div class="refresh-monitor-cell">
+                        <dt>Controllo pagina</dt>
+                        <dd id="refreshCheckedAt">--</dd>
+                    </div>
+                    <div class="refresh-monitor-cell">
+                        <dt>Pubblicazione sito</dt>
+                        <dd id="refreshPublishedAt">--</dd>
+                    </div>
+                    <div class="refresh-monitor-cell">
+                        <dt>Ultimo dato fonte</dt>
+                        <dd id="refreshSourceAt">--</dd>
+                    </div>
+                </dl>
+            </section>
+
+            <details id="statusDetails" class="status-details">
+                <summary id="statusDetailsSummary">Dettagli affidabilita</summary>
+                <ul id="statusDetailsList" class="status-details-list"></ul>
+            </details>
+        </aside>
+
         <footer class="site-footer">
             <p>
                 Fonte:
@@ -137,7 +160,7 @@
                     MeteoProject
                 </a>
             </p>
-            <p>Aggiornamento automatico ogni 5 minuti.</p>
+            <p>La fonte principale non pubblica in modo continuo: la pagina ricontrolla i dati pubblicati ogni 5 minuti e la pipeline li ripubblica fino a ogni 15 minuti.</p>
         </footer>
     </div>
 </body>

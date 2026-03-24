@@ -108,6 +108,13 @@ const state = {
     requestController: null,
     requestId: 0,
     availableMetrics: new Set(),
+    refreshMonitor: {
+        tone: 'idle',
+        badgeLabel: 'In attesa',
+        title: 'Sto preparando il primo controllo dei dati pubblicati.',
+        body: 'Quando ricarichi, qui ti mostro se il sito ha pubblicato un nuovo file e se la fonte principale contiene un nuovo dato.',
+        checkedAt: null,
+    },
 };
 
 const elements = {};
@@ -131,6 +138,12 @@ function cacheElements() {
     elements.freshnessSummary = document.getElementById('freshnessSummary');
     elements.lastUpdate = document.getElementById('lastUpdate');
     elements.refreshNow = document.getElementById('refreshNow');
+    elements.refreshMonitorBadge = document.getElementById('refreshMonitorBadge');
+    elements.refreshMonitorTitle = document.getElementById('refreshMonitorTitle');
+    elements.refreshMonitorBody = document.getElementById('refreshMonitorBody');
+    elements.refreshCheckedAt = document.getElementById('refreshCheckedAt');
+    elements.refreshPublishedAt = document.getElementById('refreshPublishedAt');
+    elements.refreshSourceAt = document.getElementById('refreshSourceAt');
     elements.statusDetails = document.getElementById('statusDetails');
     elements.statusDetailsSummary = document.getElementById('statusDetailsSummary');
     elements.statusDetailsList = document.getElementById('statusDetailsList');
@@ -261,10 +274,11 @@ async function loadDashboard({ initial = false, force = false, silent = false } 
     }
 
     const loadId = state.requestId + 1;
+    const previousStatus = state.status;
     state.requestId = loadId;
     state.loading = true;
     state.requestController = new AbortController();
-    setLoadingState(true, { initial, silent });
+    setLoadingState(true, { initial, silent, manual: force });
 
     try {
         const [seriesResult, statusResult] = await Promise.allSettled([
@@ -288,6 +302,7 @@ async function loadDashboard({ initial = false, force = false, silent = false } 
                 throw error;
             }
 
+            setRefreshMonitorFailure(error, { initial: false, silent });
             renderDashboard();
             renderFailure(error);
             state.loading = false;
@@ -308,6 +323,7 @@ async function loadDashboard({ initial = false, force = false, silent = false } 
         state.availableMetrics = detectAvailableMetrics(records);
         state.selectedMetric = resolveSelectedMetric(state.selectedMetric, state.availableMetrics);
         state.selectedRange = resolveSelectedRange(state.selectedRange);
+        setRefreshMonitorSuccess({ previousStatus, currentStatus: status, initial, manual: force });
 
         renderDashboard();
         state.loading = false;
@@ -326,6 +342,7 @@ async function loadDashboard({ initial = false, force = false, silent = false } 
 
         console.error('Dashboard refresh failed:', error);
         state.loading = false;
+        setRefreshMonitorFailure(error, { initial, silent });
         renderFailure(error);
         setLoadingState(false, { initial, silent, failure: true });
     }
@@ -728,6 +745,7 @@ function renderHero() {
     elements.heroNarrative.textContent = buildHeroNarrative(latest);
     elements.freshnessSummary.textContent = buildFreshnessHeadline();
     elements.lastUpdate.textContent = buildUpdateLine();
+    renderRefreshMonitor();
     renderStatusDetails();
 }
 
@@ -740,6 +758,7 @@ function renderHeroEmpty() {
     elements.heroNarrative.textContent = 'Caricamento dati in corso.';
     elements.freshnessSummary.textContent = 'Sto recuperando gli ultimi dati disponibili.';
     elements.lastUpdate.textContent = 'Ultimo aggiornamento: in attesa dei dati';
+    renderRefreshMonitor();
     renderStatusDetails();
 }
 
@@ -780,10 +799,10 @@ function buildFreshnessHeadline() {
     }
 
     if (ageMinutes <= getStaleThreshold()) {
-        return `Ultimo dato ${formatAge(ageMinutes)} fa. La sorgente e in ritardo.`;
+        return `Ultimo dato ${formatAge(ageMinutes)} fa. La fonte principale non ha ancora pubblicato un aggiornamento piu recente.`;
     }
 
-    return `Ultimo dato ${formatAge(ageMinutes)} fa. Il dato non e piu fresco.`;
+    return `Ultimo dato ${formatAge(ageMinutes)} fa. Sto mostrando l ultimo valore disponibile finche la fonte principale non pubblica un nuovo aggiornamento.`;
 }
 
 function buildUpdateLine() {
@@ -803,6 +822,121 @@ function buildUpdateLine() {
     }
 
     return `Ultimo dato ${sourceLabel} · ${rowCount} campioni`;
+}
+
+function renderRefreshMonitor() {
+    if (
+        !elements.refreshMonitorBadge
+        || !elements.refreshMonitorTitle
+        || !elements.refreshMonitorBody
+        || !elements.refreshCheckedAt
+        || !elements.refreshPublishedAt
+        || !elements.refreshSourceAt
+    ) {
+        return;
+    }
+
+    elements.refreshMonitorBadge.className = `refresh-monitor-badge is-${state.refreshMonitor.tone}`;
+    elements.refreshMonitorBadge.textContent = state.refreshMonitor.badgeLabel;
+    elements.refreshMonitorTitle.textContent = state.refreshMonitor.title;
+    elements.refreshMonitorBody.textContent = state.refreshMonitor.body;
+    elements.refreshCheckedAt.textContent = formatMonitorDate(state.refreshMonitor.checkedAt);
+    elements.refreshPublishedAt.textContent = formatMonitorTimestamp(state.status?.publishedAt);
+    elements.refreshSourceAt.textContent = formatMonitorTimestamp(state.status?.sourceUpdatedAt);
+}
+
+function setRefreshMonitorLoading({ initial = false, manual = false } = {}) {
+    state.refreshMonitor = {
+        tone: 'loading',
+        badgeLabel: manual ? 'Controllo manuale' : 'Controllo in corso',
+        title: initial
+            ? 'Sto caricando i dati pubblicati dal sito.'
+            : 'Sto ricontrollando i file pubblicati dal sito.',
+        body: manual
+            ? 'Sto verificando se il sito ha pubblicato un file piu recente e se dentro quel file compare un nuovo dato della fonte principale.'
+            : 'Sto leggendo di nuovo i dati pubblicati per capire se la pipeline ha esposto novita della fonte principale.',
+        checkedAt: state.refreshMonitor.checkedAt,
+    };
+    renderRefreshMonitor();
+}
+
+function setRefreshMonitorSuccess({ previousStatus, currentStatus, initial = false, manual = false } = {}) {
+    const previousPublishedAt = previousStatus?.publishedAt?.sortKey ?? null;
+    const previousSourceAt = previousStatus?.sourceUpdatedAt?.sortKey ?? null;
+    const currentPublishedAt = currentStatus?.publishedAt?.sortKey ?? null;
+    const currentSourceAt = currentStatus?.sourceUpdatedAt?.sortKey ?? null;
+    const sitePublishedNewFile = Number.isFinite(currentPublishedAt)
+        && (!Number.isFinite(previousPublishedAt) || currentPublishedAt > previousPublishedAt);
+    const sourcePublishedNewData = Number.isFinite(currentSourceAt)
+        && (!Number.isFinite(previousSourceAt) || currentSourceAt > previousSourceAt);
+
+    let tone = 'idle';
+    let badgeLabel = 'Stato caricato';
+    let title = 'Sto mostrando l ultimo snapshot pubblicato dal sito.';
+    let body = 'Quando ricarichi, qui ti mostro se il sito ha pubblicato un nuovo file e se la fonte principale contiene un nuovo dato.';
+
+    if (sourcePublishedNewData) {
+        tone = 'live';
+        badgeLabel = 'Nuovo dato';
+        title = 'Il sito sta mostrando un nuovo dato pubblicato dalla fonte principale.';
+        body = `L ultimo dato della fonte e passato a ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)} e il sito lo ha gia recepito.`;
+    } else if (sitePublishedNewFile) {
+        tone = 'waiting';
+        badgeLabel = 'Fonte invariata';
+        title = 'Il sito ha pubblicato un nuovo file, ma la fonte principale non ha aggiunto un dato piu recente.';
+        body = `La pubblicazione del sito e avanzata a ${formatMonitorTimestamp(currentStatus?.publishedAt)}, ma l ultimo dato della fonte resta ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)}.`;
+    } else if (initial) {
+        tone = 'idle';
+        badgeLabel = 'Prima lettura';
+        title = 'Prima lettura completata.';
+        body = 'Sto mostrando l ultimo file che il sito ha gia pubblicato. I prossimi controlli ti diranno se cambia la pubblicazione del sito o il dato della fonte.';
+    } else {
+        tone = 'waiting';
+        badgeLabel = manual ? 'Nessuna novita' : 'Fonte invariata';
+        title = 'Controllo completato senza nuovi dati pubblicati.';
+        body = `Ho ricontrollato i file pubblicati del sito: l ultima pubblicazione resta ${formatMonitorTimestamp(currentStatus?.publishedAt)} e l ultimo dato della fonte resta ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)}.`;
+    }
+
+    state.refreshMonitor = {
+        tone,
+        badgeLabel,
+        title,
+        body,
+        checkedAt: Date.now(),
+    };
+}
+
+function setRefreshMonitorFailure(error, { initial = false, silent = false } = {}) {
+    if (silent) {
+        return;
+    }
+
+    state.refreshMonitor = {
+        tone: 'error',
+        badgeLabel: 'Controllo fallito',
+        title: initial
+            ? 'Il primo controllo dei dati pubblicati non e riuscito.'
+            : 'Non sono riuscito a ricontrollare i file pubblicati dal sito.',
+        body: `Sto continuando a mostrare l ultimo snapshot disponibile. Dettaglio: ${sanitizeText(error?.message || 'errore sconosciuto')}.`,
+        checkedAt: Date.now(),
+    };
+    renderRefreshMonitor();
+}
+
+function formatMonitorTimestamp(timestampInfo) {
+    if (!timestampInfo?.sortKey) {
+        return 'n/d';
+    }
+
+    return formatDateShort(new Date(timestampInfo.sortKey));
+}
+
+function formatMonitorDate(value) {
+    if (!value) {
+        return 'n/d';
+    }
+
+    return formatDateShort(new Date(value));
 }
 
 function renderStatusDetails() {
@@ -1380,7 +1514,7 @@ function renderHealth() {
     }
 
     if (hasWarning) {
-        const pillText = freshnessIsStale ? 'Dato non fresco' : 'Sorgente in ritardo';
+        const pillText = freshnessIsStale ? 'Ultimo dato disponibile' : 'In attesa di nuovi dati';
         setPill(pillText, 'is-stale');
         setBanner(buildWarningMessage(), 'warning');
         elements.freshnessSummary.textContent = buildFreshnessHeadline();
@@ -1397,18 +1531,18 @@ function renderHealth() {
 function buildWarningMessage() {
     const ageMinutes = getObservationAgeMinutes();
     if (ageMinutes !== null && ageMinutes > getStaleThreshold()) {
-        return `Il dato piu recente risale a ${formatAge(ageMinutes)} fa. Leggilo come ultimo valore valido, non come live.`;
+        return `La fonte principale non ha ancora pubblicato un dato piu recente. Sto mostrando l ultimo valore disponibile, aggiornato ${formatAge(ageMinutes)} fa, e continuo a ricontrollare periodicamente.`;
     }
 
     if (ageMinutes !== null) {
-        return `La sorgente e in ritardo: l ultimo dato disponibile risale a ${formatAge(ageMinutes)} fa.`;
+        return `La fonte principale non ha ancora pubblicato un dato piu recente. La pagina continua a ricontrollare periodicamente i dati pubblicati.`;
     }
 
     if (state.status?.message) {
         return sanitizeText(state.status.message);
     }
 
-    return 'La sorgente dati e temporaneamente in ritardo.';
+    return 'La fonte principale non ha ancora pubblicato un aggiornamento piu recente. Continuo a ricontrollare periodicamente.';
 }
 
 function isFreshnessStale(status) {
@@ -1441,11 +1575,12 @@ function getStaleThreshold() {
     return Number.isFinite(Number(rawThreshold)) ? Number(rawThreshold) : STALE_THRESHOLD_MINUTES;
 }
 
-function setLoadingState(isLoading, { initial = false, silent = false, failure = false } = {}) {
+function setLoadingState(isLoading, { initial = false, silent = false, failure = false, manual = false } = {}) {
     elements.refreshNow.disabled = isLoading;
-    elements.refreshNow.textContent = isLoading ? 'Aggiornamento...' : 'Aggiorna';
+    elements.refreshNow.textContent = isLoading ? 'Ricarica...' : 'Ricarica';
 
     if (isLoading && !silent) {
+        setRefreshMonitorLoading({ initial, manual });
         setPill(initial ? 'Caricamento dati' : 'Aggiornamento in corso', 'is-loading');
         if (initial) {
             setBanner('Sto caricando i dati piu recenti della stazione.', 'info');

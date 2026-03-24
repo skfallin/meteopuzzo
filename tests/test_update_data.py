@@ -58,17 +58,44 @@ def test_parse_csv_payload_rejects_unexpected_headers() -> None:
         parse_csv_payload("bad;header\n1;2\n", ZoneInfo("Europe/Rome"))
 
 
-def test_validate_observations_rejects_stale_data() -> None:
+def test_validate_observations_marks_stale_data_without_raising() -> None:
     observations, _ = parse_csv_payload(SAMPLE_CSV, ZoneInfo("Europe/Rome"))
     now = datetime(2026, 3, 24, 10, 0, tzinfo=ZoneInfo("Europe/Rome"))
 
-    with pytest.raises(PipelineError):
-        validate_observations(
-            observations,
-            now=now,
-            max_stale_minutes=45,
-            minimum_observations=2,
-        )
+    checks = validate_observations(
+        observations,
+        now=now,
+        max_stale_minutes=45,
+        minimum_observations=2,
+    )
+
+    freshness_check = next(check for check in checks if check["name"] == "freshness")
+    assert freshness_check["ok"] is False
+
+
+def test_build_status_payload_marks_stale_observations(config: Config) -> None:
+    observations, metrics = parse_csv_payload(SAMPLE_CSV, ZoneInfo("Europe/Rome"))
+    generated_at = datetime(2026, 3, 24, 10, 0, tzinfo=ZoneInfo("Europe/Rome"))
+    checks = validate_observations(
+        observations,
+        now=generated_at,
+        max_stale_minutes=45,
+        minimum_observations=2,
+    )
+
+    status = build_status_payload(
+        config=config,
+        generated_at=generated_at,
+        observations=observations,
+        checks=checks,
+        parse_metrics=metrics,
+        trigger_ok=False,
+        trigger_details="disabled",
+    )
+
+    assert status["status"] == "stale"
+    assert status["stale"] is True
+    assert "non ha ancora pubblicato" in status["message"]
 
 
 def test_publish_outputs_writes_json_and_csv(tmp_path: Path, config: Config) -> None:
