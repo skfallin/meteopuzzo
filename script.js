@@ -5,6 +5,9 @@ const FETCH_TIMEOUT_MS = 12000;
 const STALE_THRESHOLD_MINUTES = 90;
 const STORAGE_KEY = 'meteopuzzo.selectedMetric';
 const RANGE_STORAGE_KEY = 'meteopuzzo.selectedRange';
+const COMPASS_DIRECTIONS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+const COMPASS_DIRECTIONS_IT = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSO', 'SO', 'OSO', 'O', 'ONO', 'NO', 'NNO'];
+const DIRECTION_STEP_DEGREES = 22.5;
 
 const METRICS = {
     temperature: {
@@ -61,7 +64,7 @@ const METRICS = {
     direction: {
         label: 'Direzione',
         unit: '',
-        axisLabel: 'Direzione',
+        axisLabel: 'Direzione del vento',
         color: '#1c8dd8',
         tone: 'blue',
     },
@@ -436,7 +439,8 @@ function normalizeRecord(record, index) {
 }
 
 function hasAnyMetricValue(record) {
-    return ['temperature', 'dewPoint', 'humidity', 'pressure', 'wind', 'gust', 'rain'].some((key) => Number.isFinite(record[key]));
+    return ['temperature', 'dewPoint', 'humidity', 'pressure', 'wind', 'gust', 'rain'].some((key) => Number.isFinite(record[key]))
+        || getDirectionIndex(record?.direction) !== null;
 }
 
 function buildLookup(record) {
@@ -702,7 +706,7 @@ function detectAvailableMetrics(records) {
     const available = new Set();
 
     for (const metric of METRIC_ORDER) {
-        if (records.some((record) => getMetricValue(record, metric) !== null)) {
+        if (records.some((record) => hasMetricChartData(record, metric))) {
             available.add(metric);
         }
     }
@@ -1181,7 +1185,7 @@ function estimateSampleCountForMinutes(minutes) {
 function renderMetricState() {
     const metric = METRICS[state.selectedMetric] || METRICS.temperature;
     const latest = state.records[state.records.length - 1];
-    const latestValue = latest ? getMetricValue(latest, state.selectedMetric) : null;
+    const hasLatestValue = latest ? hasMetricChartData(latest, state.selectedMetric) : false;
     const filteredRecords = filterRecordsByRange(state.records, state.selectedRange);
     const rangeLabel = describeRange(state.selectedRange);
 
@@ -1201,10 +1205,10 @@ function renderMetricState() {
     elements.chartTitle.textContent = `Trend ${metric.label.toLowerCase()}`;
     if (!state.records.length) {
         elements.chartSubtitle.textContent = 'Nessun dato disponibile al momento.';
-    } else if (latestValue === null) {
+    } else if (!hasLatestValue) {
         elements.chartSubtitle.textContent = `${rangeLabel} · nessun valore valido per questa metrica.`;
     } else {
-        elements.chartSubtitle.textContent = `${rangeLabel} · ultimo valore ${formatMetricValue(state.selectedMetric, latestValue)} · ${filteredRecords.length} punti in vista.`;
+        elements.chartSubtitle.textContent = `${rangeLabel} · ultimo valore ${formatTrendSnapshot(latest, state.selectedMetric)} · ${filteredRecords.length} punti in vista.`;
     }
 
     if (!elements.chartEmptyState) {
@@ -1271,19 +1275,23 @@ function buildChartConfig(metricName) {
     const filteredRecords = filterRecordsByRange(state.records, state.selectedRange);
     const companionMetric = metric.companion ? METRICS[metric.companion] : null;
     const latestSortKey = filteredRecords[filteredRecords.length - 1]?.sortKey ?? null;
+    const isWind = metricName === 'wind';
 
     const chartRows = filteredRecords
         .map((record) => {
             const primary = getMetricValue(record, metricName);
             const companion = metric.companion ? getMetricValue(record, metric.companion) : null;
+            const direction = isWind ? getDirectionIndex(record.direction) : null;
             return {
                 fullLabel: record.label,
                 tickLabel: buildAxisLabel(record.sortKey, latestSortKey),
                 primary,
                 companion,
+                direction,
+                rawDirection: record.direction,
             };
         })
-        .filter((row) => row.primary !== null || row.companion !== null);
+        .filter((row) => row.primary !== null || row.companion !== null || row.direction !== null);
 
     if (!chartRows.length) {
         return null;
@@ -1291,7 +1299,8 @@ function buildChartConfig(metricName) {
 
     const labels = chartRows.map((row) => row.tickLabel);
     const isRain = metricName === 'rain';
-    const datasetCount = companionMetric ? 2 : 1;
+    const hasDirectionDataset = isWind && chartRows.some((row) => row.direction !== null);
+    const datasetCount = (companionMetric ? 2 : 1) + (hasDirectionDataset ? 1 : 0);
 
     const datasets = isRain
         ? [{
@@ -1340,6 +1349,26 @@ function buildChartConfig(metricName) {
         });
     }
 
+    if (hasDirectionDataset) {
+        datasets.push({
+            type: 'line',
+            label: METRICS.direction.label,
+            data: chartRows.map((row) => row.direction),
+            borderColor: METRICS.direction.color,
+            backgroundColor: hexToRgba(METRICS.direction.color, 0.08),
+            pointBackgroundColor: METRICS.direction.color,
+            pointBorderColor: '#ffffff',
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            pointHitRadius: 18,
+            borderWidth: 2,
+            fill: false,
+            spanGaps: true,
+            stepped: true,
+            yAxisID: 'yDirection',
+        });
+    }
+
     return {
         type: isRain ? 'bar' : 'line',
         data: {
@@ -1365,10 +1394,15 @@ function buildChartConfig(metricName) {
                             return chartRows[context[0]?.dataIndex]?.fullLabel || '';
                         },
                         label(context) {
+                            const row = chartRows[context.dataIndex] || null;
                             const datasetLabel = context.dataset.label || '';
                             const value = context.parsed.y;
                             if (value === null || value === undefined) {
                                 return `${datasetLabel}: n/d`;
+                            }
+
+                            if (context.dataset.yAxisID === 'yDirection') {
+                                return `${datasetLabel}: ${formatDirectionCard(row?.rawDirection ?? value)}`;
                             }
 
                             const unit = context.dataset.label === companionMetric?.label ? companionMetric.unit : metric.unit;
@@ -1406,6 +1440,26 @@ function buildChartConfig(metricName) {
                         color: 'rgba(95, 113, 133, 0.12)',
                     },
                 },
+                yDirection: hasDirectionDataset ? {
+                    position: 'right',
+                    min: 0,
+                    max: COMPASS_DIRECTIONS.length - 1,
+                    title: {
+                        display: true,
+                        text: METRICS.direction.axisLabel,
+                        color: '#5f7185',
+                    },
+                    ticks: {
+                        stepSize: 1,
+                        color: '#6b7f93',
+                        callback(value) {
+                            return formatDirectionTick(value);
+                        },
+                    },
+                    grid: {
+                        drawOnChartArea: false,
+                    },
+                } : undefined,
             },
         },
     };
@@ -1484,6 +1538,40 @@ function getMetricValue(record, metric) {
         default:
             return null;
     }
+}
+
+function hasMetricChartData(record, metric) {
+    if (!record) {
+        return false;
+    }
+
+    if (metric === 'wind') {
+        return getMetricValue(record, 'wind') !== null
+            || getMetricValue(record, 'gust') !== null
+            || getDirectionIndex(record.direction) !== null;
+    }
+
+    return getMetricValue(record, metric) !== null;
+}
+
+function formatTrendSnapshot(record, metric) {
+    if (!record) {
+        return 'n/d';
+    }
+
+    if (metric === 'wind') {
+        const speed = Number.isFinite(record.wind) ? formatMetricCard('wind', record.wind) : null;
+        const direction = simplifyDirection(record.direction);
+        if (speed && direction !== 'n/d') {
+            return `${speed} da ${direction}`;
+        }
+        if (direction !== 'n/d') {
+            return direction;
+        }
+        return speed || 'n/d';
+    }
+
+    return formatMetricValue(metric, getMetricValue(record, metric));
 }
 
 function hexToRgba(hex, alpha) {
@@ -1689,10 +1777,36 @@ function showEmptyChart(titleText, descriptionText) {
 }
 
 function degreesToDirection(degrees) {
-    const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
     const normalized = ((Number(degrees) % 360) + 360) % 360;
-    const index = Math.round(normalized / 22.5) % directions.length;
-    return directions[index];
+    const index = Math.round(normalized / DIRECTION_STEP_DEGREES) % COMPASS_DIRECTIONS.length;
+    return COMPASS_DIRECTIONS_IT[index];
+}
+
+function getDirectionIndex(value) {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+
+    if (typeof value === 'string') {
+        const normalized = value.trim().toUpperCase();
+        const compassIndex = COMPASS_DIRECTIONS.indexOf(normalized);
+        if (compassIndex >= 0) {
+            return compassIndex;
+        }
+    }
+
+    const numeric = Number(String(value).replace(',', '.'));
+    if (!Number.isFinite(numeric)) {
+        return null;
+    }
+
+    const normalized = ((numeric % 360) + 360) % 360;
+    return Math.round(normalized / DIRECTION_STEP_DEGREES) % COMPASS_DIRECTIONS.length;
+}
+
+function formatDirectionTick(value) {
+    const index = Math.round(Number(value));
+    return COMPASS_DIRECTIONS_IT[index] || '';
 }
 
 function formatMetricValue(metric, value) {
@@ -1742,6 +1856,12 @@ function formatDirectionCard(value) {
     const numeric = Number(String(value).replace(',', '.'));
     if (Number.isFinite(numeric)) {
         return `${degreesToDirection(numeric)} (${Math.round(numeric)} deg)`;
+    }
+
+    const normalized = String(value).trim().toUpperCase();
+    const compassIndex = COMPASS_DIRECTIONS.indexOf(normalized);
+    if (compassIndex >= 0) {
+        return COMPASS_DIRECTIONS_IT[compassIndex];
     }
 
     return String(value);
