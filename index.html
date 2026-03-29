@@ -10,13 +10,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script src="vendor/chart.umd.min.js" defer></script>
+    <script src="config.js" defer></script>
     <script src="script.js" defer></script>
 </head>
 <body>
     <div class="page-shell">
         <header class="hero">
             <div class="hero-main">
-                <section class="current-card" aria-labelledby="currentTitle">
+                <section id="currentCard" class="current-card" aria-labelledby="currentTitle">
                     <div class="current-primary">
                         <p id="currentTitle" class="current-label">Temperatura attuale</p>
                         <p id="heroTemperature" class="current-value">--</p>
@@ -121,7 +122,33 @@
             <p id="freshnessSummary" class="status-headline">Sto recuperando gli ultimi dati disponibili.</p>
             <p id="lastUpdate" class="last-update">Ultimo aggiornamento: in attesa dei dati</p>
             <div class="hero-actions">
-                <button id="refreshNow" class="ghost-button" type="button">Ricarica</button>
+                <div id="refreshConsole" class="refresh-console is-snapshot">
+                    <div class="refresh-console-head">
+                        <div>
+                            <p class="refresh-console-kicker">Richiesta manuale</p>
+                            <p id="refreshActionSummary" class="refresh-console-summary">Sto verificando se qui posso chiedere un refresh live alla fonte.</p>
+                        </div>
+                        <div id="refreshModePill" class="refresh-mode-pill is-snapshot">Snapshot</div>
+                    </div>
+
+                    <button id="refreshNow" class="ghost-button live-refresh-button" type="button">
+                        <span id="refreshButtonLabel">Ricarica snapshot</span>
+                        <span class="live-refresh-spinner" aria-hidden="true"></span>
+                    </button>
+
+                    <p id="refreshActionMeta" class="refresh-action-meta">Quando il backend live e disponibile, questo pulsante richiede davvero nuovi dati meteo e poi aggiorna la dashboard.</p>
+
+                    <div class="refresh-progress" aria-hidden="true">
+                        <div class="refresh-progress-track">
+                            <div id="refreshProgressFill" class="refresh-progress-fill"></div>
+                        </div>
+                        <div class="refresh-step-row">
+                            <span id="refreshStepSource" class="refresh-step">Fonte</span>
+                            <span id="refreshStepPublish" class="refresh-step">Snapshot</span>
+                            <span id="refreshStepSync" class="refresh-step">Dashboard</span>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <section id="refreshMonitor" class="refresh-monitor" aria-live="polite">
@@ -160,7 +187,7 @@
                     MeteoProject
                 </a>
             </p>
-            <p>La fonte principale non pubblica in modo continuo: la pagina ricontrolla i dati pubblicati ogni 5 minuti e la pipeline li ripubblica fino a ogni 15 minuti.</p>
+            <p>Con backend live attivo il pulsante richiede nuovi dati alla fonte in tempo reale; senza backend la pagina continua a leggere gli snapshot gia pubblicati e li ricontrolla ogni 5 minuti.</p>
         </footer>
     </div>
 </body>

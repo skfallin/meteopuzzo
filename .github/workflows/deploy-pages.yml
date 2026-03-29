@@ -48,6 +48,7 @@ jobs:
           data_dir = Path("data")
           required = [
               Path("index.html"),
+              Path("config.js"),
               Path("style.css"),
               Path("script.js"),
               Path("vendor/chart.umd.min.js"),
@@ -78,6 +79,7 @@ jobs:
           mkdir -p site/vendor
           cp index.html site/index.html
           cp index.htm site/index.htm
+          cp config.js site/config.js
           cp style.css site/style.css
           cp script.js site/script.js
           cp vendor/chart.umd.min.js site/vendor/chart.umd.min.js

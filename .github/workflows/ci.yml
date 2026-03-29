@@ -48,6 +48,7 @@ jobs:
 
           data_dir = Path("data")
           required = [
+              Path("config.js"),
               data_dir / "latest.csv",
               data_dir / "series.json",
               data_dir / "status.json",

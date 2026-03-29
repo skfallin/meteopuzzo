@@ -1,14 +1,20 @@
 const SERIES_URL = 'data/series.json';
 const STATUS_URL = 'data/status.json';
+const DASHBOARD_API_URL = 'api/dashboard';
+const LIVE_REFRESH_API_URL = 'api/refresh';
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 12000;
+const REFRESH_STAGE_ADVANCE_MS = 1100;
 const STALE_THRESHOLD_MINUTES = 90;
+const LIVE_REFRESH_TIMEOUT_MS = 60000;
 const STORAGE_KEY = 'meteopuzzo.selectedMetric';
 const RANGE_STORAGE_KEY = 'meteopuzzo.selectedRange';
 const COMPASS_DIRECTIONS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 const COMPASS_DIRECTIONS_IT = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSO', 'SO', 'OSO', 'O', 'ONO', 'NO', 'NNO'];
 const COMPASS_DIRECTIONS_FULL_IT = ['NORD', 'NORD-NORD-EST', 'NORD-EST', 'EST-NORD-EST', 'EST', 'EST-SUD-EST', 'SUD-EST', 'SUD-SUD-EST', 'SUD', 'SUD-SUD-OVEST', 'SUD-OVEST', 'OVEST-SUD-OVEST', 'OVEST', 'OVEST-NORD-OVEST', 'NORD-OVEST', 'NORD-NORD-OVEST'];
 const DIRECTION_STEP_DEGREES = 22.5;
+const APP_CONFIG = resolveAppConfig();
+const API_BASE_URL = normalizeApiBaseUrl(APP_CONFIG.apiBaseUrl);
 
 const METRICS = {
     temperature: {
@@ -102,6 +108,26 @@ const FIELD_ALIASES = {
     expectedCadenceMinutes: ['expectedCadenceMinutes', 'cadenceMinutes'],
 };
 
+function resolveAppConfig() {
+    const rawConfig = window.METEOPUZZO_CONFIG && typeof window.METEOPUZZO_CONFIG === 'object'
+        ? window.METEOPUZZO_CONFIG
+        : {};
+
+    return {
+        apiBaseUrl: typeof rawConfig.apiBaseUrl === 'string' ? rawConfig.apiBaseUrl : '',
+        liveRefreshEnabled: rawConfig.liveRefreshEnabled !== false,
+    };
+}
+
+function normalizeApiBaseUrl(value) {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+        return '';
+    }
+
+    return normalized.replace(/\/+$/, '');
+}
+
 const state = {
     chart: null,
     records: [],
@@ -112,6 +138,22 @@ const state = {
     requestController: null,
     requestId: 0,
     availableMetrics: new Set(),
+    liveRefresh: {
+        supported: null,
+        running: false,
+        animationTimer: null,
+        phase: 'probing',
+        step: 'idle',
+        message: 'Sto verificando se questo deploy espone un backend live.',
+        detail: 'Il pulsante si attiva solo quando trova un endpoint capace di richiedere nuovi dati alla sorgente.',
+        actionLabel: 'Verifica backend live',
+        actionMeta: 'Controllo della disponibilita del backend live in corso.',
+        modeLabel: 'Verifica',
+        modeTone: 'probing',
+        progress: 8,
+        completedAt: null,
+        error: null,
+    },
     refreshMonitor: {
         tone: 'idle',
         badgeLabel: 'In attesa',
@@ -131,6 +173,8 @@ async function init() {
     applyChartDefaults();
     renderSummarySkeleton();
     renderHeroEmpty();
+    renderLiveRefreshState();
+    await detectLiveRefreshSupport();
     await loadDashboard({ initial: true });
     window.setInterval(() => {
         loadDashboard({ silent: true });
@@ -142,6 +186,16 @@ function cacheElements() {
     elements.freshnessSummary = document.getElementById('freshnessSummary');
     elements.lastUpdate = document.getElementById('lastUpdate');
     elements.refreshNow = document.getElementById('refreshNow');
+    elements.refreshConsole = document.getElementById('refreshConsole');
+    elements.refreshActionSummary = document.getElementById('refreshActionSummary');
+    elements.refreshActionMeta = document.getElementById('refreshActionMeta');
+    elements.refreshModePill = document.getElementById('refreshModePill');
+    elements.refreshButtonLabel = document.getElementById('refreshButtonLabel');
+    elements.refreshProgressFill = document.getElementById('refreshProgressFill');
+    elements.refreshStepSource = document.getElementById('refreshStepSource');
+    elements.refreshStepPublish = document.getElementById('refreshStepPublish');
+    elements.refreshStepSync = document.getElementById('refreshStepSync');
+    elements.refreshMonitor = document.getElementById('refreshMonitor');
     elements.refreshMonitorBadge = document.getElementById('refreshMonitorBadge');
     elements.refreshMonitorTitle = document.getElementById('refreshMonitorTitle');
     elements.refreshMonitorBody = document.getElementById('refreshMonitorBody');
@@ -168,10 +222,13 @@ function cacheElements() {
     elements.rangeButtons = Array.from(document.querySelectorAll('.range-button'));
     elements.canvas = document.getElementById('myChart');
     elements.chartPanel = document.getElementById('trendPanel');
+    elements.currentCard = document.getElementById('currentCard');
 }
 
 function bindActions() {
-    elements.refreshNow?.addEventListener('click', () => loadDashboard({ force: true }));
+    elements.refreshNow?.addEventListener('click', () => {
+        handleManualRefresh();
+    });
 
     elements.metricButtons.forEach((button) => {
         button.addEventListener('click', () => {
@@ -222,6 +279,580 @@ function bindArrowKeyNavigation(containerSelector, buttonSelector) {
     });
 }
 
+async function handleManualRefresh() {
+    if (state.liveRefresh.running) {
+        return;
+    }
+
+    if (!state.liveRefresh.supported) {
+        setLiveRefreshState({
+            phase: 'error',
+            step: 'unsupported',
+            message: 'Questo deploy non espone un backend live raggiungibile dal browser.',
+            detail: API_BASE_URL
+                ? `Verifica che l endpoint ${API_BASE_URL}/api/dashboard risponda correttamente e consenta CORS.`
+                : 'Avvia `python3 backend_server.py` in locale oppure imposta `apiBaseUrl` in `config.js` per usare un backend esterno.',
+            actionLabel: 'Backend live assente',
+            actionMeta: 'Il pulsante resta disabilitato finche non e presente un endpoint `/api/refresh` utilizzabile.',
+            modeLabel: 'Offline',
+            modeTone: 'error',
+            progress: 0,
+            error: 'Backend live non disponibile',
+        });
+        return;
+    }
+
+    await requestLiveRefresh();
+}
+
+async function detectLiveRefreshSupport() {
+    if (!APP_CONFIG.liveRefreshEnabled) {
+        setLiveRefreshState({
+            supported: false,
+            phase: 'snapshot',
+            step: 'disabled',
+            message: 'Refresh live disattivato dalla configurazione frontend.',
+            detail: 'Imposta `liveRefreshEnabled: true` in `config.js` per abilitare l integrazione col backend.',
+            actionLabel: 'Refresh live disattivato',
+            actionMeta: 'La dashboard continuera a leggere solo gli snapshot pubblicati.',
+            modeLabel: 'Snapshot',
+            modeTone: 'snapshot',
+            progress: 0,
+        });
+        return;
+    }
+
+    try {
+        const payload = await fetchApiJson(`/${DASHBOARD_API_URL}`);
+        updateLiveRefreshFromApi(payload, { initialProbe: true });
+    } catch (error) {
+        if (error?.payload?.backend?.capabilities?.supportsLiveRefresh) {
+            updateLiveRefreshFromApi(error.payload, { initialProbe: true });
+            return;
+        }
+
+        setLiveRefreshState({
+            supported: false,
+            phase: 'snapshot',
+            step: 'unsupported',
+            message: 'Backend live non raggiungibile da questo deploy.',
+            detail: API_BASE_URL
+                ? `Il frontend sta cercando il backend su ${API_BASE_URL}, ma la verifica iniziale e fallita.`
+                : 'GitHub Pages pura non puo eseguire refresh live: serve un backend separato oppure il server locale `backend_server.py`.',
+            actionLabel: 'Refresh live non disponibile',
+            actionMeta: 'Il pulsante non simula piu un refresh reale: si abilita solo quando trova un backend capace di aggiornare davvero i dati.',
+            modeLabel: 'Snapshot',
+            modeTone: 'snapshot',
+            progress: 0,
+            error: error?.message || 'Backend live non raggiungibile',
+        });
+    }
+}
+
+async function requestLiveRefresh() {
+    const previousStatus = state.status;
+    setLiveRefreshState({
+        running: true,
+        phase: 'running',
+        step: 'queued',
+        message: 'Invio la richiesta al backend live.',
+        detail: 'Sto chiedendo al backend di contattare la fonte, rigenerare gli artefatti e poi sincronizzare la dashboard.',
+        actionLabel: 'Richiesta in corso',
+        actionMeta: 'Refresh live avviato. Puoi seguire le fasi qui sotto in tempo reale.',
+        modeLabel: 'Live',
+        modeTone: 'running',
+        progress: 14,
+        error: null,
+    });
+    startLiveRefreshAnimation();
+    setRefreshMonitorLoading({ manual: true, live: true });
+
+    try {
+        const payload = await fetchApiJson(`/${LIVE_REFRESH_API_URL}`, {
+            method: 'POST',
+            timeoutMs: LIVE_REFRESH_TIMEOUT_MS,
+        });
+        stopLiveRefreshAnimation();
+        updateLiveRefreshFromApi(payload);
+        await loadDashboard({ force: true, live: true });
+
+        const refreshDelta = compareRefreshStatus(previousStatus, state.status);
+        const sourceAdvanced = refreshDelta.sourcePublishedNewData;
+        const publishedAdvanced = refreshDelta.sitePublishedNewFile;
+
+        setLiveRefreshState({
+            running: false,
+            phase: sourceAdvanced ? 'success' : 'snapshot',
+            step: 'completed',
+            message: sourceAdvanced
+                ? 'Nuovi dati ricevuti e pubblicati.'
+                : 'Refresh live completato senza un nuovo campione dalla fonte.',
+            detail: sourceAdvanced
+                ? `Ultimo dato fonte ${formatMonitorTimestamp(state.status?.sourceUpdatedAt)} · pubblicazione ${formatMonitorTimestamp(state.status?.publishedAt)}.`
+                : publishedAdvanced
+                    ? `Il backend ha rigenerato lo snapshot alle ${formatMonitorTimestamp(state.status?.publishedAt)}, ma la fonte non ha pubblicato un dato piu recente.`
+                    : 'La richiesta live e stata eseguita, ma la fonte non ha pubblicato un campione piu recente rispetto all ultimo snapshot.',
+            actionLabel: 'Richiedi nuovi dati live',
+            actionMeta: 'Il backend live e pronto per una nuova richiesta manuale.',
+            modeLabel: sourceAdvanced ? 'Live' : 'Snapshot',
+            modeTone: sourceAdvanced ? 'live' : 'snapshot',
+            progress: 100,
+            completedAt: Date.now(),
+            error: null,
+        });
+
+        if (sourceAdvanced) {
+            pulseRefreshMonitor();
+        }
+    } catch (error) {
+        stopLiveRefreshAnimation();
+        setLiveRefreshState({
+            running: false,
+            phase: 'error',
+            step: 'failed',
+            message: 'Il backend ha rifiutato o fallito il refresh live.',
+            detail: sanitizeText(error?.message || 'Errore sconosciuto'),
+            actionLabel: 'Riprova refresh live',
+            actionMeta: 'La dashboard continua a mostrare l ultimo snapshot valido.',
+            modeLabel: 'Errore',
+            modeTone: 'error',
+            progress: 0,
+            error: error?.message || 'Refresh live fallito',
+        });
+        setRefreshMonitorFailure(error, { live: true });
+    }
+}
+
+async function fetchApiJson(path, { method = 'GET', body = null, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    let response;
+
+    try {
+        response = await fetch(buildApiUrl(path), {
+            method,
+            headers: {
+                Accept: 'application/json',
+                ...(body ? { 'Content-Type': 'application/json' } : {}),
+            },
+            body: body ? JSON.stringify(body) : null,
+            cache: 'no-store',
+            signal: controller.signal,
+        });
+    } catch (error) {
+        window.clearTimeout(timeoutId);
+        if (error?.name === 'AbortError') {
+            throw new Error(`Timeout durante la richiesta a ${path}`);
+        }
+        throw error;
+    }
+
+    window.clearTimeout(timeoutId);
+
+    let payload = null;
+    try {
+        payload = await response.json();
+    } catch (error) {
+        payload = null;
+    }
+
+    if (!response.ok) {
+        const message = payload?.refresh?.message
+            || payload?.state?.message
+            || payload?.error
+            || `Request for ${path} failed with status ${response.status}`;
+        const error = new Error(message);
+        error.statusCode = response.status;
+        error.payload = payload;
+        throw error;
+    }
+
+    return payload;
+}
+
+function buildApiUrl(path) {
+    return `${API_BASE_URL}${path}`;
+}
+
+function updateLiveRefreshFromApi(payload, { initialProbe = false } = {}) {
+    const normalized = normalizeLiveRefreshPayload(payload);
+    const snapshot = normalized.snapshot;
+    const apiState = normalized.state;
+    const phase = apiState.phase || 'idle';
+    const step = apiState.step || 'idle';
+    const supported = normalized.supported;
+
+    const detail = buildLiveRefreshDetail(apiState, snapshot, { initialProbe });
+    const message = buildLiveRefreshMessage(apiState, snapshot, { initialProbe });
+    const presentation = resolveLiveRefreshPresentation(phase, step, supported);
+
+    setLiveRefreshState({
+        supported,
+        running: apiState.running === true,
+        phase,
+        step,
+        message,
+        detail,
+        actionLabel: presentation.actionLabel,
+        actionMeta: presentation.actionMeta,
+        modeLabel: presentation.modeLabel,
+        modeTone: presentation.modeTone,
+        progress: presentation.progress,
+        error: apiState.error || null,
+    });
+}
+
+function normalizeLiveRefreshPayload(payload) {
+    const backend = payload?.backend || {};
+    const capabilities = backend?.capabilities || {};
+    const refresh = payload?.refresh || {};
+    const progress = Array.isArray(refresh.progress) ? refresh.progress : [];
+    const lastProgress = progress[progress.length - 1] || null;
+    const refreshState = refresh.state || capabilities.lastRefreshState || 'idle';
+    const running = capabilities.refreshInProgress === true;
+
+    return {
+        supported: capabilities.supportsLiveRefresh === true,
+        snapshot: payload?.snapshot || {
+            available: Boolean(payload?.status || payload?.series),
+            publishedAt: payload?.status?.publishedAt || null,
+            sourceUpdatedAt: payload?.status?.sourceUpdatedAt || null,
+            status: payload?.status?.status || null,
+            stale: payload?.status?.stale || false,
+            message: payload?.status?.message || null,
+            observationCount: payload?.status?.rowCount || payload?.series?.observationCount || null,
+        },
+        state: {
+            running,
+            phase: normalizeLiveRefreshPhase(refreshState, running),
+            step: lastProgress?.step || (refreshState === 'completed' ? 'completed' : 'idle'),
+            message: refresh.message || capabilities.lastRefreshMessage || null,
+            error: refresh.ok === false ? refresh.message || payload?.error : null,
+        },
+    };
+}
+
+function normalizeLiveRefreshPhase(refreshState, running) {
+    if (running) {
+        return 'running';
+    }
+
+    if (refreshState === 'completed') {
+        return 'success';
+    }
+
+    if (refreshState === 'failed') {
+        return 'error';
+    }
+
+    return 'idle';
+}
+
+function buildLiveRefreshMessage(apiState, snapshot, { initialProbe = false } = {}) {
+    if (initialProbe) {
+        return 'Backend live rilevato. Da qui il pulsante puo richiedere davvero nuovi dati meteo.';
+    }
+
+    if (apiState.message) {
+        return sanitizeText(apiState.message);
+    }
+
+    if (snapshot?.available) {
+        return 'Snapshot pubblicato disponibile.';
+    }
+
+    return 'Backend live pronto.';
+}
+
+function buildLiveRefreshDetail(apiState, snapshot, { initialProbe = false } = {}) {
+    if (initialProbe) {
+        return API_BASE_URL
+            ? `Il frontend usera il backend configurato su ${API_BASE_URL} per richiedere nuovi dati alla fonte.`
+            : 'Il frontend ha trovato un backend same-origin e usera `POST /api/refresh` per richiedere nuovi dati alla sorgente.';
+    }
+
+    if (apiState.phase === 'success' && snapshot?.sourceUpdatedAt) {
+        return `Ultimo dato fonte pubblicato: ${formatMonitorTimestamp(parseTimestampValue(snapshot.sourceUpdatedAt))}.`;
+    }
+
+    if (apiState.error) {
+        return sanitizeText(apiState.error);
+    }
+
+    if (snapshot?.publishedAt || snapshot?.sourceUpdatedAt) {
+        const published = snapshot.publishedAt
+            ? formatMonitorTimestamp(parseTimestampValue(snapshot.publishedAt))
+            : 'n/d';
+        const source = snapshot.sourceUpdatedAt
+            ? formatMonitorTimestamp(parseTimestampValue(snapshot.sourceUpdatedAt))
+            : 'n/d';
+        return `Snapshot attuale ${published} · ultimo dato fonte ${source}.`;
+    }
+
+    return 'Il backend e pronto a richiedere un nuovo snapshot alla sorgente meteo.';
+}
+
+function resolveLiveRefreshPresentation(phase, step, supported) {
+    if (!supported) {
+        return {
+            actionLabel: 'Refresh live non disponibile',
+            actionMeta: 'Configura o avvia un backend live per abilitare la richiesta reale di nuovi dati.',
+            modeLabel: 'Snapshot',
+            modeTone: 'snapshot',
+            progress: 0,
+        };
+    }
+
+    if (phase === 'success') {
+        return {
+            actionLabel: 'Richiedi nuovi dati live',
+            actionMeta: 'Il backend live e attivo e pronto a chiedere nuovi dati alla sorgente.',
+            modeLabel: 'Live',
+            modeTone: 'live',
+            progress: 100,
+        };
+    }
+
+    if (phase === 'error') {
+        return {
+            actionLabel: 'Riprova refresh live',
+            actionMeta: 'L ultima richiesta live e fallita. Il frontend sta mantenendo l ultimo snapshot valido.',
+            modeLabel: 'Errore',
+            modeTone: 'error',
+            progress: 0,
+        };
+    }
+
+    if (phase === 'cooldown') {
+        return {
+            actionLabel: 'Attendi cooldown',
+            actionMeta: 'Il backend limita le richieste troppo ravvicinate per non martellare la sorgente.',
+            modeLabel: 'Cooldown',
+            modeTone: 'snapshot',
+            progress: 0,
+        };
+    }
+
+    if (phase === 'running') {
+        return {
+            actionLabel: 'Aggiornamento live in corso',
+            actionMeta: 'Sto seguendo il job backend fino alla pubblicazione e sincronizzazione finale.',
+            modeLabel: 'Live',
+            modeTone: 'running',
+            progress: computeLiveRefreshProgress(step),
+        };
+    }
+
+    if (phase === 'idle' || phase === 'snapshot') {
+        return {
+            actionLabel: 'Richiedi nuovi dati live',
+            actionMeta: 'Il backend live e disponibile: questo pulsante contatta davvero la sorgente prima di aggiornare la dashboard.',
+            modeLabel: 'Live',
+            modeTone: 'live',
+            progress: 0,
+        };
+    }
+
+    return {
+        actionLabel: 'Richiedi nuovi dati live',
+        actionMeta: 'Il backend live e disponibile.',
+        modeLabel: 'Live',
+        modeTone: 'live',
+        progress: 0,
+    };
+}
+
+function startLiveRefreshAnimation() {
+    stopLiveRefreshAnimation();
+    const simulatedSteps = [
+        {
+            step: 'triggering_source',
+            message: 'Sto chiedendo alla fonte di preparare un nuovo snapshot.',
+            detail: 'Il backend sta contattando MeteoProject per forzare la pubblicazione dei dati piu recenti.',
+        },
+        {
+            step: 'downloading_csv',
+            message: 'Sto scaricando il CSV piu recente dalla sorgente.',
+            detail: 'Appena il backend riceve il payload, passa alla validazione e alla rigenerazione degli artefatti.',
+        },
+        {
+            step: 'validating',
+            message: 'Sto validando il payload ricevuto dalla fonte.',
+            detail: 'Controllo integrita, freshness e formato prima di sostituire lo snapshot pubblicato.',
+        },
+        {
+            step: 'publishing',
+            message: 'Sto pubblicando il nuovo snapshot della dashboard.',
+            detail: 'Manca solo la sincronizzazione finale del frontend con i file appena aggiornati.',
+        },
+    ];
+    let index = 0;
+
+    state.liveRefresh.animationTimer = window.setInterval(() => {
+        if (!state.liveRefresh.running) {
+            stopLiveRefreshAnimation();
+            return;
+        }
+
+        const current = simulatedSteps[Math.min(index, simulatedSteps.length - 1)];
+        setLiveRefreshState({
+            step: current.step,
+            message: current.message,
+            detail: current.detail,
+            progress: computeLiveRefreshProgress(current.step),
+        });
+        index += 1;
+    }, REFRESH_STAGE_ADVANCE_MS);
+}
+
+function stopLiveRefreshAnimation() {
+    if (state.liveRefresh.animationTimer) {
+        window.clearInterval(state.liveRefresh.animationTimer);
+        state.liveRefresh.animationTimer = null;
+    }
+}
+
+function computeLiveRefreshProgress(step) {
+    switch (step) {
+    case 'queued':
+        return 12;
+    case 'triggering_source':
+        return 30;
+    case 'downloading_csv':
+        return 52;
+    case 'validating':
+        return 72;
+    case 'publishing':
+        return 88;
+    case 'syncing-dashboard':
+        return 92;
+    case 'completed':
+        return 100;
+    default:
+        return 18;
+    }
+}
+
+function setLiveRefreshState(patch) {
+    state.liveRefresh = {
+        ...state.liveRefresh,
+        ...patch,
+    };
+    renderLiveRefreshState();
+}
+
+function renderLiveRefreshState() {
+    if (
+        !elements.refreshNow
+        || !elements.refreshConsole
+        || !elements.refreshActionSummary
+        || !elements.refreshActionMeta
+        || !elements.refreshModePill
+        || !elements.refreshButtonLabel
+        || !elements.refreshProgressFill
+        || !elements.refreshStepSource
+        || !elements.refreshStepPublish
+        || !elements.refreshStepSync
+    ) {
+        return;
+    }
+
+    const liveState = state.liveRefresh;
+    elements.refreshActionSummary.textContent = liveState.message;
+    elements.refreshActionMeta.textContent = liveState.detail || liveState.actionMeta;
+    elements.refreshModePill.className = `refresh-mode-pill is-${liveState.modeTone}`;
+    elements.refreshModePill.textContent = liveState.modeLabel;
+    elements.refreshButtonLabel.textContent = liveState.actionLabel;
+    elements.refreshProgressFill.style.width = `${Math.max(0, Math.min(100, liveState.progress))}%`;
+
+    const buttonClasses = ['ghost-button', 'live-refresh-button'];
+    const consoleClasses = ['refresh-console'];
+    if (liveState.running || state.loading) {
+        buttonClasses.push('is-busy');
+    }
+
+    if (liveState.running) {
+        consoleClasses.push('is-active');
+    } else if (liveState.phase === 'success') {
+        buttonClasses.push('is-live-capable', 'is-success');
+        consoleClasses.push('is-success');
+    } else if (liveState.phase === 'error') {
+        buttonClasses.push('is-error');
+        consoleClasses.push('is-error');
+    } else if (liveState.supported) {
+        buttonClasses.push('is-live-capable');
+        if (liveState.modeTone === 'live') {
+            consoleClasses.push('is-success');
+        }
+    }
+
+    elements.refreshNow.className = buttonClasses.join(' ');
+    elements.refreshConsole.className = consoleClasses.join(' ');
+    elements.refreshNow.disabled = state.loading || liveState.running || !liveState.supported;
+    elements.refreshMonitor?.classList.toggle('is-active', liveState.running);
+
+    updateRefreshStepState(liveState.step);
+}
+
+function updateRefreshStepState(step) {
+    const sourceStep = step === 'queued' || step === 'triggering_source' || step === 'downloading_csv'
+        ? 'current'
+        : ['validating', 'publishing', 'syncing-dashboard', 'completed'].includes(step)
+            ? 'complete'
+            : step === 'failed'
+                ? 'error'
+                : 'idle';
+    const publishStep = step === 'validating' || step === 'publishing'
+        ? 'current'
+        : ['syncing-dashboard', 'completed'].includes(step)
+            ? 'complete'
+            : step === 'failed'
+                ? 'error'
+                : 'idle';
+    const syncStep = step === 'syncing-dashboard'
+        ? 'current'
+        : step === 'completed'
+            ? 'complete'
+            : step === 'failed'
+                ? 'error'
+                : 'idle';
+
+    applyRefreshStepState(elements.refreshStepSource, sourceStep);
+    applyRefreshStepState(elements.refreshStepPublish, publishStep);
+    applyRefreshStepState(elements.refreshStepSync, syncStep);
+}
+
+function applyRefreshStepState(element, tone) {
+    if (!element) {
+        return;
+    }
+
+    element.className = 'refresh-step';
+    if (tone === 'current') {
+        element.classList.add('is-current');
+    } else if (tone === 'complete') {
+        element.classList.add('is-complete');
+    } else if (tone === 'error') {
+        element.classList.add('is-error');
+    }
+}
+
+function pulseRefreshMonitor() {
+    if (!elements.refreshMonitor) {
+        return;
+    }
+
+    elements.refreshMonitor.classList.remove('is-live-pulse');
+    void elements.refreshMonitor.offsetWidth;
+    elements.refreshMonitor.classList.add('is-live-pulse');
+
+    if (elements.currentCard) {
+        elements.currentCard.classList.remove('is-celebrating');
+        void elements.currentCard.offsetWidth;
+        elements.currentCard.classList.add('is-celebrating');
+    }
+}
+
 function selectMetric(metric, { scroll = false } = {}) {
     if (!metric || !state.availableMetrics.has(metric)) {
         return;
@@ -268,7 +899,7 @@ function applyChartDefaults() {
     window.Chart.defaults.plugins.tooltip.cornerRadius = 12;
 }
 
-async function loadDashboard({ initial = false, force = false, silent = false } = {}) {
+async function loadDashboard({ initial = false, force = false, silent = false, live = false } = {}) {
     if (state.loading) {
         if (!force) {
             return;
@@ -282,7 +913,7 @@ async function loadDashboard({ initial = false, force = false, silent = false } 
     state.requestId = loadId;
     state.loading = true;
     state.requestController = new AbortController();
-    setLoadingState(true, { initial, silent, manual: force });
+    setLoadingState(true, { initial, silent, manual: force, live });
 
     try {
         const [seriesResult, statusResult] = await Promise.allSettled([
@@ -306,11 +937,11 @@ async function loadDashboard({ initial = false, force = false, silent = false } 
                 throw error;
             }
 
-            setRefreshMonitorFailure(error, { initial: false, silent });
+            setRefreshMonitorFailure(error, { initial: false, silent, live });
             renderDashboard();
             renderFailure(error);
             state.loading = false;
-            setLoadingState(false, { initial: false, silent, failure: true });
+            setLoadingState(false, { initial: false, silent, failure: true, live });
             return;
         }
 
@@ -327,11 +958,11 @@ async function loadDashboard({ initial = false, force = false, silent = false } 
         state.availableMetrics = detectAvailableMetrics(records);
         state.selectedMetric = resolveSelectedMetric(state.selectedMetric, state.availableMetrics);
         state.selectedRange = resolveSelectedRange(state.selectedRange);
-        setRefreshMonitorSuccess({ previousStatus, currentStatus: status, initial, manual: force });
+        setRefreshMonitorSuccess({ previousStatus, currentStatus: status, initial, manual: force, live });
 
         renderDashboard();
         state.loading = false;
-        setLoadingState(false, { initial: false, silent });
+        setLoadingState(false, { initial: false, silent, live });
     } catch (error) {
         if (error.name === 'AbortError') {
             if (loadId === state.requestId) {
@@ -346,9 +977,9 @@ async function loadDashboard({ initial = false, force = false, silent = false } 
 
         console.error('Dashboard refresh failed:', error);
         state.loading = false;
-        setRefreshMonitorFailure(error, { initial, silent });
+        setRefreshMonitorFailure(error, { initial, silent, live });
         renderFailure(error);
-        setLoadingState(false, { initial, silent, failure: true });
+        setLoadingState(false, { initial, silent, failure: true, live });
     }
 }
 
@@ -771,7 +1402,7 @@ function buildHeroNarrative(latest) {
     const parts = [];
 
     if (latest.wind !== null) {
-        const direction = latest.direction ? ` da ${simplifyDirection(latest.direction)}` : '';
+        const direction = latest.direction ? ` da ${formatDirectionSentence(latest.direction)}` : '';
         parts.push(`Vento ${describeWind(latest.wind)}${direction}`);
     }
 
@@ -831,7 +1462,8 @@ function buildUpdateLine() {
 
 function renderRefreshMonitor() {
     if (
-        !elements.refreshMonitorBadge
+        !elements.refreshMonitor
+        || !elements.refreshMonitorBadge
         || !elements.refreshMonitorTitle
         || !elements.refreshMonitorBody
         || !elements.refreshCheckedAt
@@ -841,6 +1473,10 @@ function renderRefreshMonitor() {
         return;
     }
 
+    elements.refreshMonitor.className = 'refresh-monitor';
+    if (state.refreshMonitor.tone === 'loading' || state.refreshMonitor.tone === 'live') {
+        elements.refreshMonitor.classList.add('is-active');
+    }
     elements.refreshMonitorBadge.className = `refresh-monitor-badge is-${state.refreshMonitor.tone}`;
     elements.refreshMonitorBadge.textContent = state.refreshMonitor.badgeLabel;
     elements.refreshMonitorTitle.textContent = state.refreshMonitor.title;
@@ -850,14 +1486,18 @@ function renderRefreshMonitor() {
     elements.refreshSourceAt.textContent = formatMonitorTimestamp(state.status?.sourceUpdatedAt);
 }
 
-function setRefreshMonitorLoading({ initial = false, manual = false } = {}) {
+function setRefreshMonitorLoading({ initial = false, manual = false, live = false } = {}) {
     state.refreshMonitor = {
         tone: 'loading',
-        badgeLabel: manual ? 'Controllo manuale' : 'Controllo in corso',
+        badgeLabel: live ? 'Refresh live' : manual ? 'Controllo manuale' : 'Controllo in corso',
         title: initial
             ? 'Sto caricando i dati pubblicati dal sito.'
-            : 'Sto ricontrollando i file pubblicati dal sito.',
-        body: manual
+            : live
+                ? 'Sto chiedendo nuovi dati alla fonte e poi sincronizzando la dashboard.'
+                : 'Sto ricontrollando i file pubblicati dal sito.',
+        body: live
+            ? 'Il backend sta contattando la sorgente, rigenerando lo snapshot e preparando l aggiornamento finale della dashboard.'
+            : manual
             ? 'Sto verificando se il sito ha pubblicato un file piu recente e se dentro quel file compare un nuovo dato della fonte principale.'
             : 'Sto leggendo di nuovo i dati pubblicati per capire se la pipeline ha esposto novita della fonte principale.',
         checkedAt: state.refreshMonitor.checkedAt,
@@ -865,15 +1505,22 @@ function setRefreshMonitorLoading({ initial = false, manual = false } = {}) {
     renderRefreshMonitor();
 }
 
-function setRefreshMonitorSuccess({ previousStatus, currentStatus, initial = false, manual = false } = {}) {
+function compareRefreshStatus(previousStatus, currentStatus) {
     const previousPublishedAt = previousStatus?.publishedAt?.sortKey ?? null;
     const previousSourceAt = previousStatus?.sourceUpdatedAt?.sortKey ?? null;
     const currentPublishedAt = currentStatus?.publishedAt?.sortKey ?? null;
     const currentSourceAt = currentStatus?.sourceUpdatedAt?.sortKey ?? null;
-    const sitePublishedNewFile = Number.isFinite(currentPublishedAt)
-        && (!Number.isFinite(previousPublishedAt) || currentPublishedAt > previousPublishedAt);
-    const sourcePublishedNewData = Number.isFinite(currentSourceAt)
-        && (!Number.isFinite(previousSourceAt) || currentSourceAt > previousSourceAt);
+
+    return {
+        sitePublishedNewFile: Number.isFinite(currentPublishedAt)
+            && (!Number.isFinite(previousPublishedAt) || currentPublishedAt > previousPublishedAt),
+        sourcePublishedNewData: Number.isFinite(currentSourceAt)
+            && (!Number.isFinite(previousSourceAt) || currentSourceAt > previousSourceAt),
+    };
+}
+
+function setRefreshMonitorSuccess({ previousStatus, currentStatus, initial = false, manual = false, live = false } = {}) {
+    const { sitePublishedNewFile, sourcePublishedNewData } = compareRefreshStatus(previousStatus, currentStatus);
 
     let tone = 'idle';
     let badgeLabel = 'Stato caricato';
@@ -882,14 +1529,22 @@ function setRefreshMonitorSuccess({ previousStatus, currentStatus, initial = fal
 
     if (sourcePublishedNewData) {
         tone = 'live';
-        badgeLabel = 'Nuovo dato';
-        title = 'Il sito sta mostrando un nuovo dato pubblicato dalla fonte principale.';
-        body = `L ultimo dato della fonte e passato a ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)} e il sito lo ha gia recepito.`;
+        badgeLabel = live ? 'Nuovo dato live' : 'Nuovo dato';
+        title = live
+            ? 'Il refresh live ha portato un nuovo dato nella dashboard.'
+            : 'Il sito sta mostrando un nuovo dato pubblicato dalla fonte principale.';
+        body = live
+            ? `Ho richiesto nuovi dati alla fonte e ora la dashboard mostra il campione pubblicato alle ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)}.`
+            : `L ultimo dato della fonte e passato a ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)} e il sito lo ha gia recepito.`;
     } else if (sitePublishedNewFile) {
         tone = 'waiting';
-        badgeLabel = 'Fonte invariata';
-        title = 'Il sito ha pubblicato un nuovo file, ma la fonte principale non ha aggiunto un dato piu recente.';
-        body = `La pubblicazione del sito e avanzata a ${formatMonitorTimestamp(currentStatus?.publishedAt)}, ma l ultimo dato della fonte resta ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)}.`;
+        badgeLabel = live ? 'Fonte invariata' : 'Fonte invariata';
+        title = live
+            ? 'Il refresh live ha rigenerato lo snapshot, ma la fonte non ha aggiunto un nuovo campione.'
+            : 'Il sito ha pubblicato un nuovo file, ma la fonte principale non ha aggiunto un dato piu recente.';
+        body = live
+            ? `Lo snapshot e stato aggiornato alle ${formatMonitorTimestamp(currentStatus?.publishedAt)}, ma l ultimo dato fonte resta ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)}.`
+            : `La pubblicazione del sito e avanzata a ${formatMonitorTimestamp(currentStatus?.publishedAt)}, ma l ultimo dato della fonte resta ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)}.`;
     } else if (initial) {
         tone = 'idle';
         badgeLabel = 'Prima lettura';
@@ -897,9 +1552,13 @@ function setRefreshMonitorSuccess({ previousStatus, currentStatus, initial = fal
         body = 'Sto mostrando l ultimo file che il sito ha gia pubblicato. I prossimi controlli ti diranno se cambia la pubblicazione del sito o il dato della fonte.';
     } else {
         tone = 'waiting';
-        badgeLabel = manual ? 'Nessuna novita' : 'Fonte invariata';
-        title = 'Controllo completato senza nuovi dati pubblicati.';
-        body = `Ho ricontrollato i file pubblicati del sito: l ultima pubblicazione resta ${formatMonitorTimestamp(currentStatus?.publishedAt)} e l ultimo dato della fonte resta ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)}.`;
+        badgeLabel = live ? 'Fonte controllata' : manual ? 'Nessuna novita' : 'Fonte invariata';
+        title = live
+            ? 'Refresh live completato senza nuovi dati dalla fonte.'
+            : 'Controllo completato senza nuovi dati pubblicati.';
+        body = live
+            ? `Ho eseguito una richiesta live, ma l ultima pubblicazione resta ${formatMonitorTimestamp(currentStatus?.publishedAt)} e l ultimo dato fonte resta ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)}.`
+            : `Ho ricontrollato i file pubblicati del sito: l ultima pubblicazione resta ${formatMonitorTimestamp(currentStatus?.publishedAt)} e l ultimo dato della fonte resta ${formatMonitorTimestamp(currentStatus?.sourceUpdatedAt)}.`;
     }
 
     state.refreshMonitor = {
@@ -911,18 +1570,22 @@ function setRefreshMonitorSuccess({ previousStatus, currentStatus, initial = fal
     };
 }
 
-function setRefreshMonitorFailure(error, { initial = false, silent = false } = {}) {
+function setRefreshMonitorFailure(error, { initial = false, silent = false, live = false } = {}) {
     if (silent) {
         return;
     }
 
     state.refreshMonitor = {
         tone: 'error',
-        badgeLabel: 'Controllo fallito',
+        badgeLabel: live ? 'Refresh live fallito' : 'Controllo fallito',
         title: initial
             ? 'Il primo controllo dei dati pubblicati non e riuscito.'
-            : 'Non sono riuscito a ricontrollare i file pubblicati dal sito.',
-        body: `Sto continuando a mostrare l ultimo snapshot disponibile. Dettaglio: ${sanitizeText(error?.message || 'errore sconosciuto')}.`,
+            : live
+                ? 'La richiesta live non e riuscita.'
+                : 'Non sono riuscito a ricontrollare i file pubblicati dal sito.',
+        body: live
+            ? `Continuo a mostrare l ultimo snapshot valido. Dettaglio backend: ${sanitizeText(error?.message || 'errore sconosciuto')}.`
+            : `Sto continuando a mostrare l ultimo snapshot disponibile. Dettaglio: ${sanitizeText(error?.message || 'errore sconosciuto')}.`,
         checkedAt: Date.now(),
     };
     renderRefreshMonitor();
@@ -1673,15 +2336,19 @@ function getStaleThreshold() {
     return Number.isFinite(Number(rawThreshold)) ? Number(rawThreshold) : STALE_THRESHOLD_MINUTES;
 }
 
-function setLoadingState(isLoading, { initial = false, silent = false, failure = false, manual = false } = {}) {
-    elements.refreshNow.disabled = isLoading;
-    elements.refreshNow.textContent = isLoading ? 'Ricarica...' : 'Ricarica';
+function setLoadingState(isLoading, { initial = false, silent = false, failure = false, manual = false, live = false } = {}) {
+    if (elements.refreshNow) {
+        elements.refreshNow.disabled = isLoading || state.liveRefresh.running || !state.liveRefresh.supported;
+    }
+    renderLiveRefreshState();
 
     if (isLoading && !silent) {
-        setRefreshMonitorLoading({ initial, manual });
-        setPill(initial ? 'Caricamento dati' : 'Aggiornamento in corso', 'is-loading');
+        setRefreshMonitorLoading({ initial, manual, live });
+        setPill(initial ? 'Caricamento dati' : live ? 'Refresh live in corso' : 'Aggiornamento in corso', 'is-loading');
         if (initial) {
             setBanner('Sto caricando i dati piu recenti della stazione.', 'info');
+        } else if (live) {
+            setBanner('Sto chiedendo nuovi dati alla fonte e poi rileggo subito lo snapshot aggiornato.', 'info');
         }
 
         if (!state.records.length) {
@@ -1890,6 +2557,11 @@ function formatDirectionWindow(value) {
     }
 
     return shortLabel;
+}
+
+function formatDirectionSentence(value) {
+    const fullLabel = formatDirectionWindow(value);
+    return fullLabel === 'n/d' ? fullLabel : fullLabel.toLowerCase();
 }
 
 function formatMetricNumber(value, digits = 1) {

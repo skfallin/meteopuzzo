@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 import requests
@@ -525,11 +525,19 @@ def publish_outputs(
     )
 
 
-def run_pipeline(config: Config, logger: logging.Logger) -> None:
+def run_pipeline(
+    config: Config,
+    logger: logging.Logger,
+    progress_callback: Callable[[str, str], None] | None = None,
+) -> dict[str, Any]:
     generated_at = datetime.now(config.timezone)
     start_day = (generated_at - timedelta(days=config.lookback_days)).date()
     end_day = generated_at.date()
     csv_url = config.csv_url(start_day, end_day)
+
+    def report(step: str, message: str) -> None:
+        if progress_callback:
+            progress_callback(step, message)
 
     session = requests.Session()
     session.headers.update(
@@ -539,7 +547,9 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
         }
     )
 
+    report("triggering_source", "Richiedo alla sorgente la preparazione di un nuovo snapshot.")
     trigger_ok, trigger_details = trigger_archive_refresh(session, config, logger)
+    report("downloading_csv", "Scarico il CSV piu recente dalla sorgente meteo.")
     response = request_with_retry(
         session,
         csv_url,
@@ -553,6 +563,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
     if "csv" not in content_type.lower():
         raise PipelineError(f"Unexpected content type for CSV endpoint: {content_type}")
 
+    report("validating", "Valido il payload CSV e preparo gli artefatti pubblicabili.")
     observations, parse_metrics = parse_csv_payload(response.text, config.timezone)
     checks = validate_observations(
         observations,
@@ -574,6 +585,7 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
         trigger_ok=trigger_ok,
         trigger_details=trigger_details,
     )
+    report("publishing", "Pubblico gli artefatti JSON e CSV aggiornati.")
     publish_outputs(
         config=config,
         observations=observations,
@@ -581,6 +593,14 @@ def run_pipeline(config: Config, logger: logging.Logger) -> None:
         status_payload=status_payload,
     )
     logger.info("Published %s observations to %s", len(observations), config.output_dir)
+    return {
+        "generatedAt": generated_at.isoformat(),
+        "observationCount": len(observations),
+        "seriesPayload": series_payload,
+        "statusPayload": status_payload,
+        "triggerOk": trigger_ok,
+        "triggerDetails": trigger_details,
+    }
 
 
 def parse_args() -> argparse.Namespace:
