@@ -7,6 +7,7 @@ const STORAGE_KEY = 'meteopuzzo.selectedMetric';
 const RANGE_STORAGE_KEY = 'meteopuzzo.selectedRange';
 const COMPASS_DIRECTIONS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 const COMPASS_DIRECTIONS_IT = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSO', 'SO', 'OSO', 'O', 'ONO', 'NO', 'NNO'];
+const COMPASS_DIRECTIONS_FULL_IT = ['NORD', 'NORD-NORD-EST', 'NORD-EST', 'EST-NORD-EST', 'EST', 'EST-SUD-EST', 'SUD-EST', 'SUD-SUD-EST', 'SUD', 'SUD-SUD-OVEST', 'SUD-OVEST', 'OVEST-SUD-OVEST', 'OVEST', 'OVEST-NORD-OVEST', 'NORD-OVEST', 'NORD-NORD-OVEST'];
 const DIRECTION_STEP_DEGREES = 22.5;
 
 const METRICS = {
@@ -743,7 +744,7 @@ function renderHero() {
 
     elements.heroTemperature.textContent = formatMetricCard('temperature', latest.temperature);
     elements.heroWind.textContent = formatMetricCard('wind', latest.wind);
-    elements.heroDirection.textContent = formatDirectionCard(latest.direction);
+    elements.heroDirection.textContent = formatDirectionWindow(latest.direction);
     elements.heroHumidity.textContent = formatMetricCard('humidity', latest.humidity);
     elements.heroPressure.textContent = formatMetricCard('pressure', latest.pressure);
     elements.heroNarrative.textContent = buildHeroNarrative(latest);
@@ -1055,10 +1056,11 @@ function renderSummary() {
         }),
         createSummaryCard({
             label: 'Direzione',
-            value: formatDirectionCard(latest.direction),
+            value: formatDirectionWindow(latest.direction),
             note: 'Direzione del vento',
             targetMetric: 'wind',
             tone: 'blue',
+            cardClassName: 'is-direction',
         }),
     ].filter(Boolean);
 
@@ -1098,14 +1100,22 @@ function createSkeletonCard(isPrimary) {
     return card;
 }
 
-function createSummaryCard({ label, value, note, targetMetric, tone, primary = false }) {
+function createSummaryCard({ label, value, note, targetMetric, tone, primary = false, cardClassName = '' }) {
     if (!value || value === 'n/d') {
         return null;
     }
 
     const card = document.createElement('button');
+    const cardClasses = ['summary-card', primary ? 'is-primary' : 'is-secondary'];
+    if (tone) {
+        cardClasses.push(`tone-${tone}`);
+    }
+    if (cardClassName) {
+        cardClasses.push(cardClassName);
+    }
+
     card.type = 'button';
-    card.className = `summary-card ${primary ? 'is-primary' : 'is-secondary'}${tone ? ` tone-${tone}` : ''}`;
+    card.className = cardClasses.join(' ');
     card.dataset.targetMetric = targetMetric;
     card.setAttribute('aria-pressed', targetMetric === state.selectedMetric ? 'true' : 'false');
 
@@ -1865,6 +1875,21 @@ function formatDirectionCard(value) {
     }
 
     return String(value);
+}
+
+function formatDirectionWindow(value) {
+    const shortLabel = formatDirectionCard(value);
+    if (shortLabel === 'n/d') {
+        return shortLabel;
+    }
+
+    const baseLabel = shortLabel.split(' (')[0];
+    const compassIndex = COMPASS_DIRECTIONS_IT.indexOf(baseLabel);
+    if (compassIndex >= 0) {
+        return COMPASS_DIRECTIONS_FULL_IT[compassIndex];
+    }
+
+    return shortLabel;
 }
 
 function formatMetricNumber(value, digits = 1) {
