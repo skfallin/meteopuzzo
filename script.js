@@ -423,10 +423,19 @@ async function requestLiveRefresh() {
     }
 }
 
-async function fetchApiJson(path, { method = 'GET', body = null, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
+async function fetchApiJson(path, { method = 'GET', body = null, timeoutMs = FETCH_TIMEOUT_MS, signal = null } = {}) {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    const abortFromParent = () => controller.abort();
     let response;
+
+    if (signal) {
+        if (signal.aborted) {
+            controller.abort();
+        } else {
+            signal.addEventListener('abort', abortFromParent, { once: true });
+        }
+    }
 
     try {
         response = await fetch(buildApiUrl(path), {
@@ -441,6 +450,9 @@ async function fetchApiJson(path, { method = 'GET', body = null, timeoutMs = FET
         });
     } catch (error) {
         window.clearTimeout(timeoutId);
+        if (signal) {
+            signal.removeEventListener('abort', abortFromParent);
+        }
         if (error?.name === 'AbortError') {
             throw new Error(`Timeout durante la richiesta a ${path}`);
         }
@@ -448,6 +460,9 @@ async function fetchApiJson(path, { method = 'GET', body = null, timeoutMs = FET
     }
 
     window.clearTimeout(timeoutId);
+    if (signal) {
+        signal.removeEventListener('abort', abortFromParent);
+    }
 
     let payload = null;
     try {
@@ -472,6 +487,10 @@ async function fetchApiJson(path, { method = 'GET', body = null, timeoutMs = FET
 
 function buildApiUrl(path) {
     return `${API_BASE_URL}${path}`;
+}
+
+function shouldUseDashboardApi() {
+    return state.liveRefresh.supported === true;
 }
 
 function updateLiveRefreshFromApi(payload, { initialProbe = false } = {}) {
@@ -916,14 +935,44 @@ async function loadDashboard({ initial = false, force = false, silent = false, l
     setLoadingState(true, { initial, silent, manual: force, live });
 
     try {
-        const [seriesResult, statusResult] = await Promise.allSettled([
-            fetchJson(SERIES_URL, state.requestController.signal),
-            fetchJson(STATUS_URL, state.requestController.signal),
-        ]);
+        let rawSeriesPayload = null;
+        let rawStatusPayload = null;
+        let seriesLoadError = null;
 
-        const status = statusResult.status === 'fulfilled'
-            ? normalizeStatus(statusResult.value)
-            : normalizeStatus(null);
+        if (shouldUseDashboardApi()) {
+            try {
+                const dashboardPayload = await fetchApiJson(`/${DASHBOARD_API_URL}`, {
+                    signal: state.requestController.signal,
+                });
+                updateLiveRefreshFromApi(dashboardPayload);
+                rawSeriesPayload = dashboardPayload?.series || null;
+                rawStatusPayload = dashboardPayload?.status || null;
+            } catch (error) {
+                seriesLoadError = error;
+                if (error?.payload?.backend?.capabilities?.supportsLiveRefresh) {
+                    updateLiveRefreshFromApi(error.payload);
+                }
+            }
+        }
+
+        if (!rawSeriesPayload || !rawStatusPayload) {
+            const [seriesResult, statusResult] = await Promise.allSettled([
+                fetchJson(SERIES_URL, state.requestController.signal),
+                fetchJson(STATUS_URL, state.requestController.signal),
+            ]);
+
+            rawSeriesPayload = seriesResult.status === 'fulfilled' ? seriesResult.value : null;
+            rawStatusPayload = statusResult.status === 'fulfilled' ? statusResult.value : null;
+            if (seriesResult.status !== 'fulfilled') {
+                seriesLoadError = seriesResult.reason;
+            }
+
+            if (seriesResult.status !== 'fulfilled' && !state.records.length) {
+                throw seriesResult.reason;
+            }
+        }
+
+        const status = normalizeStatus(rawStatusPayload);
 
         if (loadId !== state.requestId) {
             return;
@@ -931,23 +980,22 @@ async function loadDashboard({ initial = false, force = false, silent = false, l
 
         state.status = status;
 
-        if (seriesResult.status !== 'fulfilled') {
-            const error = seriesResult.reason;
-            if (!state.records.length) {
-                throw error;
+        if (!rawSeriesPayload) {
+            if (seriesLoadError && state.records.length) {
+                setRefreshMonitorFailure(seriesLoadError, { initial: false, silent, live });
+                renderDashboard();
+                renderFailure(seriesLoadError);
+                state.loading = false;
+                setLoadingState(false, { initial: false, silent, failure: true, live });
+                return;
             }
 
-            setRefreshMonitorFailure(error, { initial: false, silent, live });
-            renderDashboard();
-            renderFailure(error);
-            state.loading = false;
-            setLoadingState(false, { initial: false, silent, failure: true, live });
-            return;
+            throw seriesLoadError || new Error('No usable dashboard payload was returned');
         }
 
-        const records = normalizeSeries(seriesResult.value);
+        const records = normalizeSeries(rawSeriesPayload);
         if (!records.length) {
-            throw new Error('No usable records found in data/series.json');
+            throw new Error('No usable records found in the latest dashboard payload');
         }
 
         if (loadId !== state.requestId) {

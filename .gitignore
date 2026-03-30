@@ -28,6 +28,8 @@ venv/
 ENV/
 .venv/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 site/
 
 # IDE
@@ -37,3 +39,11 @@ site/
 # OS
 .DS_Store
 Thumbs.db
+
+# Vercel
+.vercel/
+
+# Environment
+.env
+.env.*
+!.env.example

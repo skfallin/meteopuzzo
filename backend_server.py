@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from meteopuzzo_backend import MeteopuzzoBackend, RefreshFailedError, RefreshInProgressError, SnapshotUnavailableError
+from meteopuzzo_runtime import create_local_backend
 
 
 class MeteopuzzoRequestHandler(SimpleHTTPRequestHandler):
@@ -40,9 +41,10 @@ class MeteopuzzoRequestHandler(SimpleHTTPRequestHandler):
 
     def end_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Access-Control-Allow-Origin", self.server.allow_origin)  # type: ignore[attr-defined]
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        if self.server.allow_origin:  # type: ignore[attr-defined]
+            self.send_header("Access-Control-Allow-Origin", self.server.allow_origin)  # type: ignore[attr-defined]
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         super().end_headers()
 
     def _route_api_get(self) -> bool:
@@ -66,7 +68,7 @@ class MeteopuzzoRequestHandler(SimpleHTTPRequestHandler):
             payload = self.backend.dashboard_snapshot()
             self._send_json(
                 {
-                    **self._live_payload(),
+                    **self.backend.live_payload(snapshot=payload),
                     "series": payload["series"],
                     "status": payload["status"],
                 }
@@ -86,7 +88,7 @@ class MeteopuzzoRequestHandler(SimpleHTTPRequestHandler):
             payload = self.backend.refresh_live()
             self._send_json(
                 {
-                    **self._live_payload(),
+                    **self.backend.live_payload(snapshot=payload),
                     "series": payload["series"],
                     "status": payload["status"],
                     "refresh": payload["refresh"],
@@ -102,7 +104,7 @@ class MeteopuzzoRequestHandler(SimpleHTTPRequestHandler):
             )
         except RefreshFailedError as exc:
             body: dict[str, Any] = {
-                **self._live_payload(),
+                **self.backend.live_payload(snapshot=exc.snapshot),
                 "error": str(exc),
             }
             if exc.snapshot is not None:
@@ -125,41 +127,15 @@ class MeteopuzzoRequestHandler(SimpleHTTPRequestHandler):
             self.rfile.read(content_length)
 
     def _live_payload(self) -> dict[str, Any]:
-        snapshot_available = True
-        snapshot = None
-        try:
-            snapshot = self.backend.dashboard_snapshot()
-        except SnapshotUnavailableError:
-            snapshot_available = False
-
-        status_payload = snapshot["status"] if snapshot else {}
-        observation_count = status_payload.get("observationCount")
-        if observation_count is None and snapshot:
-            observation_count = snapshot["series"].get("observationCount")
-
-        return {
-            "ok": True,
-            "refreshSupported": True,
-            "state": self.backend.refresh_status_payload(),
-            "snapshot": {
-                "available": snapshot_available,
-                "publishedAt": status_payload.get("publishedAt"),
-                "sourceUpdatedAt": status_payload.get("sourceUpdatedAt"),
-                "status": status_payload.get("status"),
-                "stale": status_payload.get("stale"),
-                "message": status_payload.get("message"),
-                "observationCount": observation_count,
-            },
-            "backend": self.backend.backend_payload(),
-        }
+        return self.backend.live_payload()
 
 
 def create_server(root_dir: Path, host: str, port: int) -> ThreadingHTTPServer:
-    backend = MeteopuzzoBackend(root_dir)
+    backend = create_local_backend(root_dir)
     handler = functools.partial(MeteopuzzoRequestHandler, directory=str(root_dir))
     server = ThreadingHTTPServer((host, port), handler)
     server.backend = backend  # type: ignore[attr-defined]
-    server.allow_origin = os.getenv("METEOPUZZO_ALLOW_ORIGIN", "*")  # type: ignore[attr-defined]
+    server.allow_origin = os.getenv("METEOPUZZO_ALLOW_ORIGIN", "").strip()  # type: ignore[attr-defined]
     return server
 
 

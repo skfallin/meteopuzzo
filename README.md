@@ -1,84 +1,81 @@
 # Stazione Meteo Montenero
 
-Dashboard meteo con frontend statico, pipeline Python di ingestione e backend HTTP leggero per richiedere refresh live on-demand.
+Dashboard meteo con frontend statico, pipeline Python e refresh live on-demand. Il progetto ora puo essere eseguito in locale come prima, ma puo anche essere pubblicato interamente su Vercel con backend Python serverless e storage persistente su Vercel Blob.
 
 ## Panoramica
 
-Il progetto puo funzionare in due modalita diverse:
+Il progetto oggi supporta due modalita operative:
 
-1. Modalita statica
-- il frontend legge solo i file in `data/`
-- e la modalita usata da GitHub Pages
-- i dati si aggiornano solo quando la pipeline rigenera gli artefatti
+1. Modalita locale
+- il frontend e servito da [`backend_server.py`](/Users/fra/Documents/code/personal/meteopuzzo/backend_server.py)
+- gli snapshot vengono letti e scritti in `data/`
+- il pulsante `Ricarica` chiama davvero `POST /api/refresh`
 
-2. Modalita live
-- il frontend trova un backend HTTP raggiungibile dal browser
-- il pulsante `Ricarica` chiede davvero nuovi dati alla sorgente meteo
-- il backend esegue la pipeline, rigenera `data/` e il frontend rilegge subito lo snapshot aggiornato
+2. Modalita Vercel
+- il frontend statico e servito dal deploy Vercel
+- le API Python vivono sotto `api/`
+- gli snapshot persistono su Vercel Blob, non sul filesystem del deploy
+- il pulsante `Ricarica` richiede davvero nuovi dati alla sorgente e il risultato resta disponibile anche dopo reload e nuove invocazioni
 
 ## Architettura
 
 Componenti principali:
 
 - [`update_data.py`](/Users/fra/Documents/code/personal/meteopuzzo/update_data.py)
-  Scarica il CSV MeteoProject, prova il trigger archivio, valida il payload, normalizza i dati e pubblica gli artefatti statici.
-
-- [`backend_server.py`](/Users/fra/Documents/code/personal/meteopuzzo/backend_server.py)
-  Serve il frontend e gli endpoint HTTP per refresh live e stato backend.
+  Scarica il CSV MeteoProject, prova il trigger archivio, valida il payload e genera `latest.csv`, `series.json` e `status.json`.
 
 - [`meteopuzzo_backend.py`](/Users/fra/Documents/code/personal/meteopuzzo/meteopuzzo_backend.py)
-  Incapsula lo stato del backend, il lock di concorrenza e il refresh live che riusa `update_data.py`.
+  Incapsula il refresh live, il lock locale, lo stato del refresh e il payload API condiviso.
 
-- [`index.html`](/Users/fra/Documents/code/personal/meteopuzzo/index.html)
-  Frontend principale.
+- [`meteopuzzo_storage.py`](/Users/fra/Documents/code/personal/meteopuzzo/meteopuzzo_storage.py)
+  Astrazione dello storage. In locale usa `data/`, su Vercel usa Blob.
+
+- [`meteopuzzo_runtime.py`](/Users/fra/Documents/code/personal/meteopuzzo/meteopuzzo_runtime.py)
+  Seleziona il backend corretto per locale o runtime Vercel.
+
+- [`backend_server.py`](/Users/fra/Documents/code/personal/meteopuzzo/backend_server.py)
+  Server HTTP locale per sviluppo e debug.
+
+- [`api/dashboard.py`](/Users/fra/Documents/code/personal/meteopuzzo/api/dashboard.py)
+- [`api/refresh.py`](/Users/fra/Documents/code/personal/meteopuzzo/api/refresh.py)
+- [`api/health.py`](/Users/fra/Documents/code/personal/meteopuzzo/api/health.py)
+- [`api/refresh_status.py`](/Users/fra/Documents/code/personal/meteopuzzo/api/refresh_status.py)
+- [`api/cron_refresh.py`](/Users/fra/Documents/code/personal/meteopuzzo/api/cron_refresh.py)
+  Functions Python usate da Vercel.
 
 - [`script.js`](/Users/fra/Documents/code/personal/meteopuzzo/script.js)
-  UI, grafici, monitor di refresh e integrazione col backend live.
+  Frontend della dashboard. Quando trova un backend live legge `GET /api/dashboard`; se non c e, ripiega su `data/*.json`.
 
-- [`style.css`](/Users/fra/Documents/code/personal/meteopuzzo/style.css)
-  Stili della dashboard e della nuova UX del refresh live.
+- [`vercel.json`](/Users/fra/Documents/code/personal/meteopuzzo/vercel.json)
+  Configurazione Vercel: durata massima delle Functions, rewrite degli endpoint e cron ogni 15 minuti.
 
-- [`config.js`](/Users/fra/Documents/code/personal/meteopuzzo/config.js)
-  Configurazione runtime del frontend per usare backend same-origin o backend esterno.
+## Come Funziona Ricarica
 
-Artefatti pubblicati:
+Quando premi `Ricarica`:
 
-- `data/latest.csv`
-- `data/series.json`
-- `data/status.json`
+1. il frontend chiama `POST /api/refresh`
+2. il backend contatta MeteoProject e scarica il CSV piu recente
+3. la pipeline rigenera `latest.csv`, `series.json` e `status.json`
+4. in locale quei file finiscono in `data/`
+5. su Vercel gli stessi artefatti vengono pubblicati su Blob
+6. il frontend rilegge `GET /api/dashboard`
+7. la UI mostra progress, esito e differenza tra `nuovo dato`, `fonte invariata` o `errore`
 
-## Cosa Succede Quando Premi Ricarica
+## Storage
 
-### Se stai usando il backend live
+In locale:
 
-Il pulsante:
+- storage filesystem
+- directory usata: `data/`
 
-1. chiama `POST /api/refresh`
-2. il backend esegue davvero la pipeline meteo
-3. la pipeline prova a richiedere nuovi dati alla sorgente
-4. il backend rigenera `data/status.json` e `data/series.json`
-5. il frontend rilegge subito lo snapshot aggiornato
-6. la UI mostra progress, step, esito e differenza tra `nuovo dato`, `fonte invariata` o `errore`
+Su Vercel:
 
-### Se stai usando solo file statici
+- storage Vercel Blob
+- gli snapshot non vengono affidati al filesystem del deploy
+- il prefisso Blob di default e `meteopuzzo/<VERCEL_ENV>`
+- puoi sovrascriverlo con `METEOPUZZO_BLOB_PREFIX`
 
-Il frontend non puo fare refresh live reale. In questo caso:
-
-- GitHub Pages continua a mostrare gli snapshot gia pubblicati
-- il backend non esiste oppure non e raggiungibile
-- il pulsante non simula piu un refresh live inesistente
-
-## GitHub Pages: Limite Importante
-
-GitHub Pages da sola non puo eseguire codice Python on-demand.
-
-Questo significa che su GitHub Pages pura:
-
-- il sito puo mostrare il frontend
-- il sito puo leggere file statici gia pubblicati
-- il sito non puo eseguire `update_data.py` quando l utente preme `Ricarica`
-
-Quindi, se vuoi il refresh live vero in produzione, devi affiancare a GitHub Pages un backend separato.
+Questo e importante perche le Vercel Functions non vanno trattate come un server persistente con cartelle locali condivise tra invocazioni.
 
 ## Configurazione Frontend
 
@@ -94,38 +91,35 @@ window.METEOPUZZO_CONFIG = {
 Significato:
 
 - `apiBaseUrl: ''`
-  Usa backend same-origin. E utile in locale quando servi tutto da `backend_server.py`.
+  Usa backend same-origin. Su Vercel e la scelta consigliata.
 
 - `apiBaseUrl: 'https://tuo-backend.example.com'`
-  Usa un backend esterno. E il caso tipico se il frontend resta su GitHub Pages ma il backend gira altrove.
+  Usa un backend esterno. Serve solo se il frontend vive altrove.
 
 - `liveRefreshEnabled: true`
   Abilita la ricerca del backend live.
 
 - `liveRefreshEnabled: false`
-  Disattiva completamente la funzione live e lascia il sito in modalita solo snapshot.
+  Forza la modalita solo snapshot.
 
-## API Backend
+## API Disponibili
 
-Endpoint esposti da [`backend_server.py`](/Users/fra/Documents/code/personal/meteopuzzo/backend_server.py):
+Endpoint principali:
 
 - `GET /api/dashboard`
-  Restituisce snapshot corrente, stato live backend e payload utili al frontend.
+  Restituisce snapshot corrente, stato backend e payload completo per il frontend.
 
 - `GET /api/health`
-  Restituisce solo lo stato live backend e metadati dello snapshot.
+  Restituisce stato backend e metadati dello snapshot.
 
 - `GET /api/refresh-status`
-  Alias di health, utile per leggere stato e progress del backend.
+  Alias di `health`.
 
 - `POST /api/refresh`
-  Esegue davvero il refresh live, rigenera gli artefatti e restituisce risultato + progress.
+  Richiede davvero nuovi dati alla sorgente.
 
-Note operative:
-
-- il backend usa un lock per evitare refresh concorrenti
-- se un refresh e gia in corso, l endpoint non avvia un secondo job parallelo
-- il backend espone anche CORS tramite `METEOPUZZO_ALLOW_ORIGIN`
+- `GET /api/cron-refresh`
+  Endpoint pensato per il cron di Vercel.
 
 ## Sviluppo Locale
 
@@ -135,146 +129,131 @@ Note operative:
 python3 -m pip install -r requirements.txt
 ```
 
-2. Genera uno snapshot locale iniziale:
+2. Genera uno snapshot iniziale:
 
 ```bash
 python3 update_data.py
 ```
 
-3. Esegui i test:
-
-```bash
-python3 -m pytest
-```
-
-4. Controlla la sintassi frontend:
-
-```bash
-node --check script.js
-```
-
-5. Avvia il backend HTTP locale:
+3. Avvia il server locale:
 
 ```bash
 python3 backend_server.py
 ```
 
-6. Apri:
+4. Apri:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-In questa modalita:
-
-- il frontend e servito dal backend
-- `config.js` puo lasciare `apiBaseUrl: ''`
-- il pulsante `Ricarica` richiede davvero nuovi dati
-
-Se vuoi servire solo i file statici:
+Verifiche utili:
 
 ```bash
-python3 -m http.server 8000
+python3 -m pytest
+node --check script.js
+python3 -m py_compile update_data.py backend_server.py meteopuzzo_backend.py meteopuzzo_storage.py meteopuzzo_runtime.py vercel_api_common.py
 ```
 
-Ma in quel caso:
+## Deploy Completo su Vercel
 
-- non esistono API live
-- il pulsante non puo fare un refresh reale della sorgente
+### Obiettivo
 
-## Deploy Attuale su GitHub
+Pubblicare:
 
-Il repository usa GitHub Actions per pubblicare gli snapshot statici.
+- frontend statico
+- API Python same-origin
+- refresh live manuale
+- refresh schedulato ogni 15 minuti
+- persistenza snapshot su Vercel Blob
 
-### CI
+### Passi
 
-- gira su `push` e `pull_request`
-- compila gli script Python
-- esegue i test `pytest`
-- controlla la sintassi di `script.js`
-- valida gli artefatti in `data/`
+1. Importa il repository in Vercel.
+2. Crea uno store Blob dal pannello Storage e collegalo al progetto.
+3. Verifica che Vercel abbia aggiunto `BLOB_READ_WRITE_TOKEN` agli environment variables del progetto.
+4. Fai deploy del progetto.
+5. Controlla che `GET /api/dashboard` risponda.
+6. Premi `Ricarica` dal frontend e verifica che il backend completi il refresh.
 
-### Deploy Pages
+### Variabili d ambiente consigliate
 
-- gira su `push` a `main`, `workflow_dispatch` e schedule ogni 15 minuti
-- esegue sempre `python update_data.py` prima di costruire l artifact Pages
-- costruisce un artifact statico con `index.html`, `index.htm`, `config.js`, `style.css`, `script.js` e `data/`
-- pubblica su GitHub Pages
+Obbligatorie in produzione:
 
-## Come Avere Refresh Live Anche in Produzione
+- `BLOB_READ_WRITE_TOKEN`
+  Viene normalmente aggiunta automaticamente quando colleghi Blob al progetto.
 
-Per avere il bottone funzionante anche fuori dal locale, ti serve questa architettura:
+Consigliate:
 
-1. GitHub Pages per il frontend
-- continua a servire HTML, CSS, JS e snapshot statici
+- `CRON_SECRET`
+  Protegge l endpoint del cron.
 
-2. Backend Python separato
-- gira su un tuo server sempre acceso
-- espone `GET /api/dashboard`, `GET /api/health`, `GET /api/refresh-status` e `POST /api/refresh`
-- puo eseguire `update_data.py`
+- `METEOPUZZO_STORAGE=blob`
+  Forza esplicitamente la modalita Blob anche se il token fosse assente in ambienti particolari.
 
-3. `config.js` puntato al backend
+- `METEOPUZZO_BLOB_PREFIX=meteopuzzo/production`
+  Utile se vuoi controllare manualmente il namespace Blob.
 
-Esempio:
+- `METEOPUZZO_ALLOW_ORIGIN`
+  Serve solo se frontend e backend sono su domini diversi.
 
-```js
-window.METEOPUZZO_CONFIG = {
-    apiBaseUrl: 'https://meteopuzzo-backend.example.com',
-    liveRefreshEnabled: true,
-};
+Configurazione meteo opzionale:
+
+- `METEOPUZZO_STATION_SLUG`
+- `METEOPUZZO_STATION_NAME`
+- `METEOPUZZO_TIMEZONE`
+- `METEOPUZZO_LOOKBACK_DAYS`
+- `METEOPUZZO_MAX_STALE_MINUTES`
+- `METEOPUZZO_EXPECTED_CADENCE_MINUTES`
+- `METEOPUZZO_REQUEST_TIMEOUT_SECONDS`
+- `METEOPUZZO_RETRIES`
+- `METEOPUZZO_RETRY_DELAY_SECONDS`
+- `METEOPUZZO_TRIGGER_ARCHIVE_REFRESH`
+
+### Cron Vercel
+
+Il progetto include gia un cron in [`vercel.json`](/Users/fra/Documents/code/personal/meteopuzzo/vercel.json):
+
+```json
+{
+  "path": "/api/cron-refresh",
+  "schedule": "*/15 * * * *"
+}
 ```
 
-In questo scenario:
+Quindi, una volta deployato su production:
 
-- il frontend puo restare su GitHub Pages
-- quando l utente preme `Ricarica`, il browser chiama il backend esterno
-- il backend aggiorna davvero i dati
-- il frontend rilegge il nuovo snapshot
+- Vercel invochera periodicamente l endpoint
+- l endpoint eseguira la pipeline
+- lo snapshot restera salvato su Blob
+- il frontend trovera sempre l ultimo snapshot persistito
 
-## Dove Hostare il Backend in Futuro
+Se imposti `CRON_SECRET`, il cron verra accettato solo con l header `Authorization: Bearer <CRON_SECRET>`.
 
-Il backend e un server Python semplice, quindi in futuro puoi ospitarlo su:
+## Comportamento del Frontend su Vercel
 
-- un VPS tuo
-- Render
-- Railway
-- Fly.io
-- un container Docker su una macchina tua o cloud
+Su Vercel il frontend:
 
-Requisiti minimi:
+- prova prima `GET /api/dashboard`
+- se l API risponde, usa quello snapshot come sorgente principale
+- se l API non e disponibile, puo ancora ripiegare sui file statici `data/`
 
-- Python 3.9+
-- accesso in rete alla sorgente MeteoProject
-- filesystem scrivibile per `data/`
-- processo sempre acceso
+Questo fallback e utile nei primi deploy o durante il bootstrap, ma la sorgente corretta in produzione Vercel e l API, non il `data/` statico incluso nel bundle.
 
-## Cose da Ricordare Quando Lo Pubblicherai
+## GitHub Pages
 
-Quando ospiterai il backend:
+GitHub Pages resta possibile solo come variante statica o come frontend separato con backend esterno.
 
-1. pubblica anche [`backend_server.py`](/Users/fra/Documents/code/personal/meteopuzzo/backend_server.py) e [`meteopuzzo_backend.py`](/Users/fra/Documents/code/personal/meteopuzzo/meteopuzzo_backend.py)
-2. assicurati che il backend possa scrivere in `data/`
-3. imposta `config.js` con l URL pubblico del backend
-4. se frontend e backend hanno domini diversi, configura `METEOPUZZO_ALLOW_ORIGIN`
-5. verifica che `POST /api/refresh` sia raggiungibile dal browser
+Se in futuro vuoi usare ancora GitHub Pages:
 
-Esempio CORS permissivo:
+- lascia `config.js` con `apiBaseUrl` puntato a un backend pubblico
+- abilita CORS con `METEOPUZZO_ALLOW_ORIGIN`
 
-```bash
-METEOPUZZO_ALLOW_ORIGIN=https://tuo-frontend.github.io python3 backend_server.py
-```
-
-## Cosa Fare Subito su GitHub
-
-1. Fai push di questa versione su `main`
-2. In `Settings -> Pages`, imposta `Source` su `GitHub Actions`
-3. Verifica che le Actions siano abilitate
-4. Approva l ambiente `github-pages` se GitHub lo richiede
-5. Quando in futuro avrai il backend, aggiorna `config.js` con il suo URL pubblico
+Ma se vuoi tenere tutto nello stesso hosting con refresh live vero, Vercel e ora la strada consigliata.
 
 ## Note Operative
 
-- Se MeteoProject non risponde o restituisce un CSV malformato, il deploy statico fallisce e GitHub Pages continua a servire l ultima versione valida.
-- Se MeteoProject risponde ma non ha ancora pubblicato un dato piu recente, la pipeline pubblica comunque gli artefatti marcandoli come `stale` in `data/status.json`.
-- Il backend live e disponibile in locale o su un tuo server Python: GitHub Pages resta statica finche non configuri un backend esterno raggiungibile dal browser.
-- [`Update Data.py`](/Users/fra/Documents/code/personal/meteopuzzo/Update%20Data.py) resta come wrapper compatibile, ma l entrypoint vero e supportato e `update_data.py`.
+- [`Update Data.py`](/Users/fra/Documents/code/personal/meteopuzzo/Update%20Data.py) resta come wrapper compatibile, ma l entrypoint supportato e [`update_data.py`](/Users/fra/Documents/code/personal/meteopuzzo/update_data.py).
+- Il server locale [`backend_server.py`](/Users/fra/Documents/code/personal/meteopuzzo/backend_server.py) resta utile per sviluppo e debug anche dopo il passaggio a Vercel.
+- Il lock di refresh protegge i doppio-click e le richieste concorrenti nello stesso processo. Su Vercel il deployment e serverless, quindi la protezione e best-effort per singola istanza.
+- Se MeteoProject non pubblica un dato piu recente, il refresh puo completarsi con snapshot aggiornato ma `sourceUpdatedAt` invariato.
